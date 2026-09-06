@@ -1,0 +1,55 @@
+.environment {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  z-index: var(--z-canvas);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.6s var(--ease-out);
+}
+.environment[data-revealed='true'] { opacity: 1; }
+
+/* ── CSS fallback environment ─────────────────────────────────────── */
+
+.environment--fallback { overflow: hidden; }
+
+.fallback-horizon {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 60% at 50% 108%, color-mix(in srgb, var(--ink) 9%, transparent), transparent 62%),
+    radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in srgb, var(--signal) 7%, transparent), transparent 60%);
+}
+
+/* A receding dotted plane — the same idea as the point field, drawn with
+   a gradient and a perspective transform instead of a GPU. */
+.fallback-grid {
+  position: absolute;
+  left: -50%;
+  right: -50%;
+  bottom: -10%;
+  height: 90%;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink) 34%, transparent) 1px, transparent 1.6px);
+  background-size: 40px 40px;
+  transform: perspective(420px) rotateX(68deg);
+  transform-origin: 50% 100%;
+  mask-image: linear-gradient(to top, #000 0%, transparent 78%);
+  opacity: 0.5;
+  animation: fallback-drift 34s linear infinite;
+}
+@keyframes fallback-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 0 400px; }
+}
+
+.fallback-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle 40vw at 50% 42%, color-mix(in srgb, var(--ink) 5%, transparent), transparent 70%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fallback-grid { animation: none; }
+}

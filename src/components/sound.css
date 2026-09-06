@@ -1,0 +1,40 @@
+.sound-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--ink-faint);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.sound-toggle:hover, .sound-toggle:focus-visible { color: var(--ink); }
+.sound-toggle[data-on='true'] { color: var(--signal); }
+
+.sound-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+.sound-bars > span {
+  width: 1.5px;
+  height: 100%;
+  background: currentColor;
+  transform: scaleY(0.22);
+  transform-origin: 50% 50%;
+  transition: transform 0.4s var(--ease-out);
+}
+.sound-toggle[data-on='true'] .sound-bars > span {
+  transform: scaleY(var(--bar-scale));
+  animation: sound-bob 1.1s var(--ease-in-out) infinite alternate;
+  animation-delay: calc(var(--bar-index) * 0.09s);
+}
+@keyframes sound-bob {
+  from { transform: scaleY(calc(var(--bar-scale) * 0.35)); }
+  to   { transform: scaleY(var(--bar-scale)); }
+}
+
+.sound-label { font-size: var(--t-micro); }
+
+@media (max-width: 520px) { .sound-label { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sound-toggle[data-on='true'] .sound-bars > span { animation: none; }
+}

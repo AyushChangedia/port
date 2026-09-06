@@ -1,0 +1,128 @@
+.about { position: relative; }
+
+/* The facet sequence: display-size, one per line, deliberately overlapping
+   the leading so it reads as one block of voice rather than a list. */
+.about-facets {
+  font-size: clamp(1.8rem, 6.2vw, 5.2rem);
+  line-height: 0.94;
+  color: var(--ink);
+  margin-bottom: clamp(3rem, 8vw, 6rem);
+}
+.about-facets .line:nth-child(even) > span { color: var(--ink-faint); }
+.about-facets .line:nth-child(2) { padding-left: clamp(1rem, 6vw, 4rem); }
+.about-facets .line:nth-child(4) { padding-left: clamp(1.5rem, 10vw, 7rem); }
+.about-facets .line:nth-child(5) { padding-left: clamp(0.5rem, 4vw, 2.5rem); }
+
+.about-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: clamp(2rem, 6vw, 6rem);
+  align-items: start;
+  margin-bottom: clamp(4rem, 10vw, 8rem);
+}
+
+.about-copy { display: grid; gap: 1.4rem; max-width: 58ch; }
+.about-paragraph {
+  font-size: clamp(1.02rem, 1.35vw, 1.28rem);
+  line-height: 1.62;
+  color: var(--ink-soft);
+}
+.about-paragraph:first-child { color: var(--ink); font-size: clamp(1.15rem, 1.8vw, 1.5rem); }
+
+.about-facts dl { display: grid; gap: 0; border-top: 1px solid var(--rule-soft); }
+.about-facts dl > div {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.about-facts dt { color: var(--ink-faint); }
+.about-facts dd { margin: 0; color: var(--ink); }
+.about-sub { display: block; color: var(--ink-faint); font-size: 0.85rem; margin-top: 0.15rem; }
+
+/* ── Metrics ──────────────────────────────────────────────────────── */
+.about-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule-soft);
+  border-block: 1px solid var(--rule-soft);
+  margin-bottom: clamp(4rem, 10vw, 8rem);
+}
+.about-metric {
+  display: grid;
+  gap: 0.4rem;
+  align-content: start;
+  padding: clamp(1.4rem, 3vw, 2.4rem) clamp(0.6rem, 2vw, 1.6rem);
+  background: var(--ground);
+}
+.about-metric-value {
+  font-size: clamp(1.7rem, 4.2vw, 3.4rem);
+  line-height: 1;
+  color: var(--ink);
+}
+.about-metric-label { color: var(--ink-soft); }
+.about-metric-detail { color: var(--ink-faint); font-size: 0.62rem; }
+
+/* ── Record ───────────────────────────────────────────────────────── */
+.about-record {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(2rem, 6vw, 5rem);
+  margin-bottom: clamp(3rem, 8vw, 6rem);
+}
+.about-record-title {
+  color: var(--signal);
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2rem;
+}
+.about-roles { display: grid; gap: 2.4rem; }
+.about-role-period { color: var(--ink-faint); margin-bottom: 0.5rem; }
+.about-role-title {
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin-bottom: 0.25rem;
+}
+.about-role-org { color: var(--ink-soft); margin-bottom: 0.9rem; }
+.about-role-points { display: grid; gap: 0.6rem; color: var(--ink-soft); max-width: 52ch; }
+.about-role-points li { position: relative; padding-left: 1.1rem; font-size: 0.96rem; line-height: 1.55; }
+.about-role-points li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 5px;
+  height: 1px;
+  background: var(--signal);
+}
+.about-role-tech { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 1rem; }
+.about-role-tech li {
+  padding: 0.28rem 0.6rem;
+  border: 1px solid var(--rule-soft);
+  color: var(--ink-faint);
+  font-size: 0.6rem;
+}
+
+/* ── Certifications ───────────────────────────────────────────────── */
+.about-cert-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.6rem 2rem;
+  color: var(--ink-soft);
+  margin-bottom: 2rem;
+}
+.about-cert-list li { font-size: 0.94rem; padding: 0.4rem 0; border-bottom: 1px solid var(--rule-soft); }
+.about-ctf { font-size: var(--t-mid); color: var(--ink); max-width: 38ch; }
+
+@media (max-width: 900px) {
+  .about-body { grid-template-columns: 1fr; }
+  .about-record { grid-template-columns: 1fr; }
+  .about-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .about-facts dl > div { grid-template-columns: 5.5rem 1fr; }
+}

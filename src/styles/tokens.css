@@ -1,0 +1,82 @@
+/* ───────────────────────────────────────────────────────────────
+   Design tokens
+
+   The environment has two states. NIGHT is the default: near-black
+   ground, bone type. PAPER is the inverted state — a hidden mode,
+   and the reason every colour below is expressed as a role rather
+   than a literal. Nothing outside this file names a raw hex.
+   ─────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Night — the default environment */
+  --ground: #08080a;
+  --ground-lift: #0f0f12;
+  --ink: #e9e5db;          /* type on ground */
+  --ink-soft: #9b9689;
+  --ink-faint: #847e70;
+  --rule: rgba(233, 229, 219, 0.14);
+  --rule-soft: rgba(233, 229, 219, 0.07);
+
+  /* The single accent. Used for signal, never for decoration. */
+  --signal: #d8452a;
+  --signal-lift: #e8603f;
+
+  /* WebGL reads these so the canvas and the DOM never drift apart. */
+  --gl-ground: 0.031, 0.031, 0.039;
+  --gl-ink: 0.914, 0.898, 0.859;
+  --gl-signal: 0.847, 0.271, 0.165;
+
+  /* Type */
+  --display: 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* A fluid scale. Display sizes are deliberately extreme — typography
+     is a primary surface here, not a label on top of one. */
+  --t-colossal: clamp(3rem, 12vw, 12.5rem);
+  --t-huge: clamp(2.6rem, 9vw, 8rem);
+  --t-large: clamp(1.9rem, 5vw, 4rem);
+  --t-mid: clamp(1.25rem, 2.6vw, 2rem);
+  --t-body: clamp(1rem, 1.15vw, 1.15rem);
+  --t-small: 0.82rem;
+  --t-micro: 0.68rem;
+
+  --track-mono: 0.14em;
+  --track-tight: -0.045em;
+
+  /* Rhythm */
+  --gutter: clamp(1.25rem, 5vw, 5rem);
+  --chapter-pad: clamp(6rem, 16vh, 12rem);
+
+  /* Motion. One easing family, so every transition reads as one language. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --dur-fast: 0.32s;
+  --dur: 0.72s;
+  --dur-slow: 1.4s;
+
+  --z-canvas: 0;
+  --z-content: 10;
+  --z-nav: 40;
+  --z-overlay: 60;
+  --z-cursor: 90;
+  --z-intro: 100;
+}
+
+/* PAPER — the inverted state. Same roles, different values, so every
+   component inverts without knowing this mode exists. */
+:root[data-mode='paper'] {
+  --ground: #e9e5db;
+  --ground-lift: #ded9cd;
+  --ink: #131215;
+  --ink-soft: #55524b;
+  --ink-faint: #676154;
+  --rule: rgba(19, 18, 21, 0.18);
+  --rule-soft: rgba(19, 18, 21, 0.08);
+  --signal: #a83318;
+  --signal-lift: #d8452a;
+
+  --gl-ground: 0.914, 0.898, 0.859;
+  --gl-ink: 0.075, 0.071, 0.082;
+  --gl-signal: 0.725, 0.227, 0.125;
+}

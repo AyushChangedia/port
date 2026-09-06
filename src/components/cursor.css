@@ -1,0 +1,73 @@
+.cursor-dot,
+.cursor-disc {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-cursor);
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform;
+}
+
+.cursor-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: opacity 0.25s var(--ease-out), background-color 0.3s var(--ease-out);
+}
+
+.cursor-disc {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+  transition:
+    width 0.42s var(--ease-out),
+    height 0.42s var(--ease-out),
+    background-color 0.42s var(--ease-out),
+    border-color 0.42s var(--ease-out),
+    opacity 0.25s var(--ease-out);
+}
+
+.cursor-label {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ground);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.28s var(--ease-out), transform 0.28s var(--ease-out);
+  white-space: nowrap;
+}
+
+/* Hovering type: the disc simply opens up a little. */
+.cursor-disc[data-state='text'] { width: 56px; height: 56px; border-color: color-mix(in srgb, var(--ink) 34%, transparent); }
+
+/* Hovering something openable: the disc becomes a solid label. */
+.cursor-disc[data-state='explore'],
+.cursor-disc[data-state='open'],
+.cursor-disc[data-state='drag'],
+.cursor-disc[data-state='close'],
+.cursor-disc[data-state='send'] {
+  width: 86px;
+  height: 86px;
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.cursor-disc[data-state='explore'] .cursor-label,
+.cursor-disc[data-state='open'] .cursor-label,
+.cursor-disc[data-state='drag'] .cursor-label,
+.cursor-disc[data-state='close'] .cursor-label,
+.cursor-disc[data-state='send'] .cursor-label {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.cursor-disc[data-state='explore'] { background: var(--signal); border-color: var(--signal); }
+.cursor-disc[data-state='explore'] .cursor-label { color: var(--ground); }
+
+.cursor-disc[data-down='true'] { border-color: var(--signal); }

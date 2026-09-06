@@ -1,0 +1,201 @@
+@import './tokens.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: auto; /* Lenis owns smooth scrolling */
+  /* Display type is meant to travel past the frame edge. `clip` contains it
+     without turning the root into a scroll container the way `hidden` would. */
+  overflow-x: clip;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: var(--t-body);
+  font-weight: 400;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.9s var(--ease-in-out), color 0.9s var(--ease-in-out);
+}
+
+/* The custom cursor replaces the system one only where a real pointer
+   exists, and only once it has actually mounted. */
+body[data-cursor='on'],
+body[data-cursor='on'] * { cursor: none; }
+
+h1, h2, h3, h4, p, figure, blockquote, ul, ol { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+img, canvas, svg { display: block; max-width: 100%; }
+
+a { color: inherit; text-decoration: none; }
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+::selection { background: var(--signal); color: var(--ground); }
+
+/* ── Focus ──────────────────────────────────────────────────────
+   Never removed, only shaped. Keyboard users get an unmistakable
+   ring in the accent colour. */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 4px;
+  border-radius: 1px;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 200;
+  padding: 0.7rem 1.1rem;
+  background: var(--ink);
+  color: var(--ground);
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  letter-spacing: var(--track-mono);
+  text-transform: uppercase;
+  transform: translateY(-160%);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.skip-link:focus-visible { transform: translateY(0); }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Shared type roles ─────────────────────────────────────────── */
+
+.display {
+  font-family: var(--display);
+  font-weight: 700;
+  line-height: 0.82;
+  letter-spacing: var(--track-tight);
+  text-transform: uppercase;
+  /* Archivo is a variable font with a width axis. Scroll velocity writes
+     to --type-width, so the type itself carries the motion. */
+  font-stretch: var(--type-width, 100%);
+  font-variation-settings: 'wdth' var(--type-wdth, 100);
+}
+
+.serif {
+  font-family: var(--serif);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.06;
+}
+.serif em { font-style: italic; }
+
+.mono {
+  font-family: var(--mono);
+  font-size: var(--t-small);
+  font-weight: 400;
+  letter-spacing: var(--track-mono);
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.micro {
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.measure { max-width: 46ch; }
+
+/* ── Line-mask reveal ──────────────────────────────────────────
+   The reveal primitive used across the whole site: a line clipped by
+   its own box, translated up from below. One primitive, used
+   everywhere, is what makes the transitions feel like one language. */
+.line { display: block; overflow: hidden; }
+.line > span {
+  display: block;
+  transform: translate3d(0, 105%, 0);
+  will-change: transform;
+}
+.line.is-in > span { transform: translate3d(0, 0, 0); }
+
+/* ── Layout scaffold ───────────────────────────────────────────── */
+
+#experience { position: relative; z-index: var(--z-content); }
+
+.chapter {
+  position: relative;
+  padding: var(--chapter-pad) var(--gutter);
+  /* Grid tracks must never be sized by an unbreakable display word. */
+  grid-template-columns: minmax(0, 1fr);
+  /* Chapters deliberately do not draw their own backgrounds. The single
+     WebGL environment behind them is what changes between chapters, so
+     the page reads as one continuous space rather than stacked panels. */
+}
+
+.rule {
+  height: 1px;
+  background: var(--rule-soft);
+  border: 0;
+  margin: 0;
+}
+
+/* ── Atmosphere ────────────────────────────────────────────────── */
+
+.grain {
+  position: fixed;
+  inset: -50%;
+  z-index: 35;
+  pointer-events: none;
+  opacity: 0.32;
+  mix-blend-mode: overlay;
+  background-image: var(--grain-src);
+  background-size: 180px 180px;
+  animation: grain-shift 0.9s steps(3) infinite;
+}
+@keyframes grain-shift {
+  0%   { transform: translate3d(0, 0, 0); }
+  33%  { transform: translate3d(-2%, 1.5%, 0); }
+  66%  { transform: translate3d(1.5%, -2%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+.vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 34;
+  pointer-events: none;
+  background: radial-gradient(ellipse 92% 78% at 50% 46%, transparent 42%, var(--ground) 100%);
+  opacity: 0.85;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────
+   Intensity is removed; legibility and state changes remain. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.12s !important;
+    scroll-behavior: auto !important;
+  }
+  .grain { animation: none; opacity: 0.18; }
+  .line > span { transform: none !important; }
+}

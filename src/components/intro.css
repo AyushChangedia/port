@@ -1,0 +1,96 @@
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-intro);
+  background: var(--ground);
+  clip-path: inset(0% 0% 0% 0%);
+  will-change: clip-path;
+}
+
+.intro-inner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--gutter);
+  will-change: transform, opacity, filter;
+}
+
+.intro-meta {
+  position: absolute;
+  color: var(--ink-faint);
+  line-height: 1.7;
+  opacity: 0;
+}
+.intro-meta--tl { top: var(--gutter); left: var(--gutter); }
+.intro-meta--tr { top: var(--gutter); right: var(--gutter); font-variant-numeric: tabular-nums; }
+.intro-meta--bl { bottom: var(--gutter); left: var(--gutter); }
+
+.intro-stage {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  width: 100%;
+}
+
+/* Seven copies of the same word, stacked in one grid cell so they can drift
+   apart and then land exactly on top of each other. */
+.intro-stack {
+  display: grid;
+  place-items: center;
+}
+.intro-echo {
+  grid-area: 1 / 1;
+  font-size: var(--t-colossal);
+  line-height: 0.82;
+  color: var(--ink);
+  opacity: 0;
+  will-change: transform, opacity, filter;
+}
+.intro-echo:last-child { color: var(--ink); }
+
+.intro-sub {
+  font-size: clamp(1.1rem, 4.4vw, 3.6rem);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  overflow: hidden;
+  margin-top: 0.1em;
+}
+.intro-sub > span {
+  display: block;
+  font-variation-settings: 'wdth' var(--type-wdth, 100);
+  will-change: transform;
+}
+
+.intro-role {
+  margin-top: 1.6rem;
+  color: var(--signal);
+  opacity: 0;
+}
+
+.intro-skip {
+  position: absolute;
+  right: var(--gutter);
+  bottom: var(--gutter);
+  z-index: 1;
+  padding: 0.7rem 1.2rem;
+  border: 1px solid var(--rule);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: var(--t-micro);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.intro-skip:hover,
+.intro-skip:focus-visible {
+  color: var(--ground);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .intro-meta--bl { display: none; }
+}
