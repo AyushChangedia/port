@@ -1,0 +1,56 @@
+.readable {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  overflow-y: auto;
+  background: var(--paper);
+  color: var(--ink-2);
+}
+
+.readable-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 20px clamp(20px, 5vw, 48px);
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.readable-top h1 {
+  font-size: clamp(22px, 3.4vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.readable-role { font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.readable-note { max-width: 34ch; font-size: 14px; color: var(--ink-3); }
+
+.readable-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: clamp(28px, 6vw, 56px) clamp(20px, 5vw, 48px) 96px;
+}
+
+.readable-section + .readable-section {
+  margin-top: 56px;
+  padding-top: 48px;
+  border-top: 1px solid var(--line);
+}
+.readable-section h2 {
+  margin-top: 6px;
+  margin-bottom: 20px;
+  font-size: clamp(26px, 4vw, 36px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* The panel styles already describe this content; reuse them verbatim so the
+   page and the world can never drift apart. */
+.readable-body { font-size: 16.5px; line-height: 1.68; }
+.readable-body > * + * { margin-top: 16px; }

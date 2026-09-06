@@ -16,7 +16,6 @@ export default defineConfig({
           // three is the heaviest dependency and is only needed once the
           // WebGL layer boots — keep it out of the critical entry chunk.
           three: ['three'],
-          motion: ['gsap', 'lenis'],
         },
       },
     },
