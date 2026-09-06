@@ -65,18 +65,24 @@ export default function Hud({
         </button>
       )}
 
+      {/* Controls, stated once. The keyboard rows are hidden on touch, where
+          they would be advice you cannot follow. */}
       {showHint && !near && (
         <div className="hud-chip hud-hint">
-          <span>
+          <span className="hint-key-only">
             <span className="kbd">W</span>
             <span className="kbd">A</span>
             <span className="kbd">S</span>
             <span className="kbd">D</span> to walk
           </span>
-          <span className="hud-hint-sep" aria-hidden="true" />
+          <span className="hint-key-only">
+            <span className="kbd">Shift</span> run · <span className="kbd">Space</span> jump
+          </span>
           <span>Drag to look</span>
-          <span className="hud-hint-sep" aria-hidden="true" />
-          <span>Click any structure to go to it</span>
+          <span>
+            <span className="hint-fine">Click</span>
+            <span className="hint-coarse">Tap</span> anything to go there
+          </span>
         </div>
       )}
     </div>

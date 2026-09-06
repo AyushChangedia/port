@@ -48,6 +48,8 @@ once under **Settings → Pages → Source: GitHub Actions**.
 | Input | Does |
 | --- | --- |
 | `W` `A` `S` `D` / arrows | Walk and turn |
+| `Shift` | Run |
+| `Space` | Jump |
 | Drag | Look around |
 | Click or tap a structure | Walk there, then open it |
 | Click or tap the ground | Walk to that spot |
@@ -81,9 +83,12 @@ that does not exist.
 
 ```
 src/
-  world/     engine.ts (camera, movement, collision, picking)
-             build.ts  (the structures)
-             labels.ts (the signs, drawn to canvas)
+  world/     engine.ts    (camera, movement, collision, picking)
+             build.ts     (the structures and the reflecting plaza)
+             scenery.ts   (skyline, planting, lamps, benches, birds)
+             materials.ts (the shared PBR material set)
+             sky.ts       (gradient dome with a sun glow)
+             labels.ts    (the signs, drawn to canvas)
   panels/    content.tsx — what each place says, used by both views
   components/ Panel, Hud, Minimap, Directory, ReadableSite
   data/      all factual content, including the world layout
@@ -101,11 +106,28 @@ raycasts against the structures; a miss falls through to the ground plane and
 walks you there, because the arches have gaps people will click straight
 through.
 
+**Reflections come from an environment probe.** `RoomEnvironment` is rendered
+once through a `PMREMGenerator` and used as the scene's environment map, which
+is what makes the glazing and the metalwork read as glass and metal rather than
+as flat colour. The plaza itself is a real mirror (`Reflector`) on capable
+devices and a glossy floor everywhere else.
+
+**Everything outside the plaza is instanced.** The skyline, the planting, the
+lamps, the benches and the birds are seven `InstancedMesh` draws in total. A
+plaza with nine objects on it reads as a test scene; the horizon is what makes
+it read as somewhere.
+
 ## Performance and fallbacks
 
 - three.js is a dynamic import in its own chunk — a device that cannot use
   WebGL never downloads it.
 - Shadows, antialiasing and pixel ratio step down on low-tier devices.
+- **Adaptive resolution.** The scene is fill-rate bound, so when frames run
+  long the renderer sheds pixels (down to 55%) rather than geometry, and takes
+  them back when there is headroom. The world stays intact either way.
+- The glazing deliberately avoids `transmission`. Real refraction forces an
+  extra full scene render every frame; clearcoat over a reflective base costs
+  nothing like it and looks near-identical at these sizes.
 - Vertical field of view narrows on portrait screens, so a phone does not spend
   half its frame on empty floor.
 - If the WebGL context fails at any point, the page view takes over.

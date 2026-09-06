@@ -1,6 +1,8 @@
 import * as THREE from 'three';
+import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { places, WORLD_RADIUS, type Place } from '../data/world';
 import { makeSign } from './labels';
+import type { Materials } from './materials';
 
 /**
  * Builds the world.
@@ -20,11 +22,9 @@ export interface BuiltWorld {
   dispose(): void;
 }
 
-const STONE = 0x2a2a31;
-const STONE_LIGHT = 0x3d3d46;
 const ACCENT = 0xb8391a;
 
-export function buildWorld(quality: 'high' | 'low'): BuiltWorld {
+export function buildWorld(quality: 'high' | 'low', materials: Materials): BuiltWorld {
   const root = new THREE.Group();
   const targets: THREE.Object3D[] = [];
   const markers = new Map<string, THREE.Mesh>();
@@ -35,9 +35,8 @@ export function buildWorld(quality: 'high' | 'low'): BuiltWorld {
     return item;
   };
 
-  const stone = track(new THREE.MeshLambertMaterial({ color: STONE }));
-  const stoneLight = track(new THREE.MeshLambertMaterial({ color: STONE_LIGHT }));
-  const accent = track(new THREE.MeshLambertMaterial({ color: ACCENT }));
+  // Materials are shared with the scenery layer and disposed by their owner.
+  const { stone, stoneLight, accent, glass, metal } = materials;
   const box = track(new THREE.BoxGeometry(1, 1, 1));
   const cylinder = track(new THREE.CylinderGeometry(0.5, 0.5, 1, quality === 'high' ? 20 : 10));
 
@@ -80,23 +79,41 @@ export function buildWorld(quality: 'high' | 'low'): BuiltWorld {
 
   // ── Ground ───────────────────────────────────────────────────────────────
   const groundGeo = track(new THREE.CircleGeometry(WORLD_RADIUS, 64));
-  const groundMat = track(new THREE.MeshLambertMaterial({ color: 0xdcd7cd }));
-  const ground = new THREE.Mesh(groundGeo, groundMat);
+  const ground = new THREE.Mesh(groundGeo, materials.ground);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   root.add(ground);
 
-  // A faint grid gives the eye a sense of speed while walking.
-  const grid = new THREE.GridHelper(WORLD_RADIUS * 2, 46, 0xb9b3a6, 0xc9c4b8);
-  grid.position.y = 0.01;
-  (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.5;
-  root.add(grid);
-  disposables.push(grid.geometry, grid.material as THREE.Material);
+  // The plaza is polished: a real mirror where the device can afford one, and
+  // a glossy floor where it cannot. It is what makes the monument feel like it
+  // is standing on something.
+  const plazaGeo = track(new THREE.CircleGeometry(11.5, 64));
+  if (quality === 'high') {
+    const mirror = new Reflector(plazaGeo, {
+      // A plaza reflection reads fine at this size and costs a quarter of
+      // what a 512 map does.
+      textureWidth: 256,
+      textureHeight: 256,
+      color: 0xb9b4a8,
+    });
+    mirror.rotation.x = -Math.PI / 2;
+    mirror.position.y = 0.012;
+    root.add(mirror);
+    disposables.push({ dispose: () => mirror.dispose() });
+  } else {
+    const plazaMat = track(new THREE.MeshStandardMaterial({
+      color: 0xc4bfb3, roughness: 0.16, metalness: 0.55, envMapIntensity: 1.4,
+    }));
+    const plaza = new THREE.Mesh(plazaGeo, plazaMat);
+    plaza.rotation.x = -Math.PI / 2;
+    plaza.position.y = 0.012;
+    root.add(plaza);
+  }
+
 
   // A low wall so the edge of the world reads as deliberate.
   const rimGeo = track(new THREE.TorusGeometry(WORLD_RADIUS, 0.22, 6, quality === 'high' ? 96 : 48));
-  const rim = new THREE.Mesh(rimGeo, stoneLight);
+  const rim = new THREE.Mesh(rimGeo, metal);
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.22;
   root.add(rim);
@@ -126,7 +143,7 @@ export function buildWorld(quality: 'high' | 'low'): BuiltWorld {
     group.position.set(place.at[0], 0, place.at[1]);
     root.add(group);
 
-    const height = buildStructure(place, group, { slab, post, stone, stoneLight, accent });
+    const height = buildStructure(place, group, { slab, post, stone, stoneLight, accent, glass, metal });
 
     // Ground ring marking where the structure opens.
     const ring = new THREE.Mesh(ringGeo, markerMat());
@@ -174,11 +191,13 @@ interface Kit {
   stone: THREE.Material;
   stoneLight: THREE.Material;
   accent: THREE.Material;
+  glass: THREE.Material;
+  metal: THREE.Material;
 }
 
 /** Returns the height of the structure, so the sign can sit above it. */
 function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
-  const { slab, post, stone, stoneLight, accent } = kit;
+  const { slab, post, stone, stoneLight, accent, glass, metal } = kit;
 
   switch (place.id) {
     // The arrival monument: a tall split slab, the name between its halves.
@@ -187,6 +206,8 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
       slab(g, 0.9, 6, 0.9, 1.4, 0, 0, stone);
       slab(g, 3.7, 0.5, 0.9, 0, 6, 0, accent);
       slab(g, 5.5, 0.18, 5.5, 0, 0, 0, stoneLight);
+      // A glass pane spanning the piers, so the monument catches the sky.
+      slab(g, 2.0, 4.6, 0.16, 0, 0.9, 0, glass);
       return 6.5;
     }
 
@@ -196,6 +217,7 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
       post(g, 0.55, 5, 2, 0, stone);
       slab(g, 5.1, 0.7, 1.1, 0, 5, 0, stone);
       slab(g, 1.4, 0.14, 1.4, 0, 5.7, 0, accent);
+      slab(g, 3.2, 3.4, 0.14, 0, 0.9, 0, glass);
       return 5.7;
     }
 
@@ -228,7 +250,9 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
         for (let z = -2; z <= 2; z += 1) {
           if ((x + z) % 3 === 0 && (x !== 0 || z !== 0)) continue; // streets
           const h = 1 + ((Math.abs(x * 7 + z * 13) % 9) / 9) * 4.5;
-          slab(g, 0.78, h, 0.78, x * 1.15, 0, z * 1.15, (x + z) % 4 === 0 ? stoneLight : stone);
+          const glazed = (x * 3 + z * 5 + 9) % 3 === 0;
+          slab(g, 0.78, h, 0.78, x * 1.15, 0, z * 1.15, glazed ? glass : stone);
+          if (!glazed) slab(g, 0.84, 0.1, 0.84, x * 1.15, h, z * 1.15, stoneLight);
           tallest = Math.max(tallest, h);
         }
       }
@@ -238,7 +262,7 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
 
     // Résumé Roaster: a leaning page, with lines struck through it.
     case 'resume-roaster': {
-      const page = slab(g, 3.4, 4.6, 0.3, 0, 0, 0, stone);
+      const page = slab(g, 3.4, 4.6, 0.3, 0, 0, 0, glass);
       page.rotation.z = -0.14;
       page.position.y = 2.4;
       for (let i = 0; i < 4; i += 1) {
@@ -257,7 +281,7 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
       ];
       for (const [x, h, z] of nodes) post(g, 0.42, h, x, z, stone);
       slab(g, 6.4, 0.16, 0.16, 0, 2.1, 0, accent);
-      slab(g, 0.16, 0.16, 3, 0, 3.3, 0, stoneLight);
+      slab(g, 0.16, 0.16, 3, 0, 3.3, 0, metal);
       post(g, 0.75, 0.5, -3, 0, accent); // the authenticated entry point
       return 3.9;
     }
@@ -269,7 +293,7 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
         const a = i * 2.399963;
         const r = 0.7 + Math.sqrt(i / 22) * 3.4;
         const h = 1 + ((i * 37) % 11) / 11 * 3.4;
-        post(g, 0.19, h, Math.cos(a) * r, Math.sin(a) * r, i % 5 === 0 ? accent : stone);
+        post(g, 0.19, h, Math.cos(a) * r, Math.sin(a) * r, i % 5 === 0 ? accent : i % 3 === 0 ? glass : metal);
         tallest = Math.max(tallest, h);
       }
       return tallest + 0.6;
@@ -281,6 +305,7 @@ function buildStructure(place: Place, g: THREE.Group, kit: Kit): number {
       post(g, 0.5, 5.2, 2.4, 0, stone);
       slab(g, 5.9, 0.8, 1.2, 0, 5.2, 0, accent);
       slab(g, 3.4, 0.1, 3.4, 0, 0, 0, stoneLight);
+      slab(g, 4.2, 4.0, 0.14, 0, 0.9, 0, glass);
       return 6;
     }
 

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { places, WORLD_RADIUS } from '../data/world';
 import { buildWorld, type BuiltWorld } from './build';
+import { createMaterials } from './materials';
+import { buildScenery, type Scenery } from './scenery';
+import { makeSky } from './sky';
 
 /**
  * The world engine: camera rig, movement, collision and interaction.
@@ -37,6 +41,8 @@ const SPEED = 9.5;
 const ACCEL = 9;
 const PLAYER_R = 0.6;
 const TURN_KEY = 1.9;
+const JUMP = 6.4;
+const GRAVITY = 20;
 
 export function createEngine(
   canvas: HTMLCanvasElement,
@@ -51,16 +57,40 @@ export function createEngine(
     return null;
   }
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.5));
+  const maxDpr = Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.5);
+  /**
+   * Adaptive resolution.
+   *
+   * This scene is fill-rate bound, so the honest lever on a struggling GPU is
+   * pixels, not geometry — dropping the buffer resolution keeps the world
+   * intact and the frame rate usable. Scales back up when there is headroom.
+   */
+  let renderScale = 1;
+  let slowFrames = 0;
+  let fastFrames = 0;
+  renderer.setPixelRatio(maxDpr);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = quality === 'high';
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Physically based materials need tone mapping or every highlight clips.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xe9e5dd);
-  scene.fog = new THREE.Fog(0xe9e5dd, 34, 78);
+  scene.fog = new THREE.Fog(0xdfe3e6, 80, 260);
 
-  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 200);
+  // A generated indoor-studio environment, used purely as a reflection probe.
+  // It costs one render at startup and is what makes glass and metal read as
+  // glass and metal rather than as flat colour.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  scene.environment = envRT.texture;
+  scene.environmentIntensity = 0.55;
+
+  const sky = makeSky();
+  scene.add(sky.mesh);
+
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
 
   /**
    * Vertical FOV has to come down on a portrait screen, otherwise most of the
@@ -92,16 +122,23 @@ export function createEngine(
   scene.add(sun);
   scene.add(new THREE.HemisphereLight(0xffffff, 0xc4bfb2, 1.15));
 
-  const world: BuiltWorld = buildWorld(quality);
+  const materials = createMaterials(quality);
+  const world: BuiltWorld = buildWorld(quality, materials);
   scene.add(world.root);
 
+  const scenery: Scenery = buildScenery(materials, quality);
+  scene.add(scenery.group);
+
   // ── Player state ─────────────────────────────────────────────────────────
-  const pos = new THREE.Vector3(0, 0, 17);
+  const pos = new THREE.Vector3(0, 0, 19);
   const vel = new THREE.Vector3();
   let yaw = Math.PI;      // facing the arrival monument
   let pitch = window.innerWidth / window.innerHeight < 0.85 ? 0.12 : 0.015;
   let paused = false;
   let moved = false;
+  /** Vertical velocity while jumping; 0 when standing. */
+  let airborne = 0;
+  let height = 0;
 
   const keys = new Set<string>();
   /** Where we are walking to. `id` is null when the destination is open ground. */
@@ -111,6 +148,7 @@ export function createEngine(
   // ── Input: keyboard ──────────────────────────────────────────────────────
   const MOVE_KEYS = new Set([
     'w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright',
+    'shift', ' ',
   ]);
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -118,10 +156,14 @@ export function createEngine(
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
     const key = e.key.toLowerCase();
     if (!MOVE_KEYS.has(key)) return;
-    // Arrow keys would otherwise scroll the page behind the canvas.
+    // Arrows and space would otherwise scroll the page behind the canvas.
     e.preventDefault();
+    if (key === ' ' && airborne === 0) {
+      airborne = JUMP;
+      callbacks.onFirstMove();
+    }
     keys.add(key);
-    autoTarget = null;
+    if (key !== 'shift' && key !== ' ') autoTarget = null;
   };
   const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase());
   const clearKeys = () => keys.clear();
@@ -274,6 +316,21 @@ export function createEngine(
     raf = requestAnimationFrame(frame);
     const dt = Math.min(0.05, clock.getDelta());
 
+    // Below ~30fps for half a second, shed pixels; comfortably above it for
+    // two seconds, take some back. The clamp stops it oscillating.
+    if (!paused) {
+      if (dt > 0.033) { slowFrames += 1; fastFrames = 0; } else if (dt < 0.019) { fastFrames += 1; slowFrames = 0; }
+      if (slowFrames > 30 && renderScale > 0.55) {
+        renderScale = Math.max(0.55, renderScale - 0.15);
+        slowFrames = 0;
+        renderer.setPixelRatio(maxDpr * renderScale);
+      } else if (fastFrames > 120 && renderScale < 1) {
+        renderScale = Math.min(1, renderScale + 0.15);
+        fastFrames = 0;
+        renderer.setPixelRatio(maxDpr * renderScale);
+      }
+    }
+
     if (!paused) {
       if (keys.has('arrowleft')) yaw += TURN_KEY * dt;
       if (keys.has('arrowright')) yaw -= TURN_KEY * dt;
@@ -309,7 +366,7 @@ export function createEngine(
       }
 
       if (wish.lengthSq() > 0) {
-        wish.normalize().multiplyScalar(SPEED);
+        wish.normalize().multiplyScalar(keys.has('shift') ? SPEED * 1.75 : SPEED);
         if (!moved) {
           moved = true;
           callbacks.onFirstMove();
@@ -323,6 +380,16 @@ export function createEngine(
       pos.z += vel.z * dt;
       collide();
       updateNear();
+
+      // Jumping. Purely for the fun of it — it changes nothing you can reach.
+      if (airborne !== 0 || height > 0) {
+        airborne -= GRAVITY * dt;
+        height += airborne * dt;
+        if (height <= 0) {
+          height = 0;
+          airborne = 0;
+        }
+      }
     }
 
     // A little bob, so walking has weight. Never enough to hurt reading, and
@@ -330,7 +397,9 @@ export function createEngine(
     const bob = reducedMotion
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
-    camera.position.set(pos.x, EYE + bob, pos.z);
+    camera.position.set(pos.x, EYE + height + bob, pos.z);
+    sky.mesh.position.set(pos.x, 0, pos.z);
+    scenery.update(clock.elapsedTime);
     camera.rotation.set(0, 0, 0, 'YXZ');
     camera.rotateY(yaw + Math.PI);
     camera.rotateX(pitch);
@@ -367,6 +436,11 @@ export function createEngine(
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       world.dispose();
+      scenery.dispose();
+      materials.dispose();
+      sky.dispose();
+      envRT.texture.dispose();
+      pmrem.dispose();
       renderer.dispose();
     },
   };
