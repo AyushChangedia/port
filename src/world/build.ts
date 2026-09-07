@@ -25,6 +25,9 @@ export interface BuiltWorld {
 
 const ACCENT = 0xb8391a;
 
+/** The pool at the centre of the plaza. water.ts surfaces it. */
+export const PLAZA_RADIUS = 11.5;
+
 export function buildWorld(quality: 'high' | 'low', materials: Materials): BuiltWorld {
   const root = new THREE.Group();
   const targets: THREE.Object3D[] = [];
@@ -85,14 +88,14 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   // a glossy floor where it cannot. It is what makes the monument feel like it
   // is standing on something. The plaza is flattened to y=0 by the terrain's
   // mask, so a flat disc is still correct here.
-  const plazaGeo = track(new THREE.CircleGeometry(11.5, 64));
+  const plazaGeo = track(new THREE.CircleGeometry(PLAZA_RADIUS, 96));
   if (quality === 'high') {
     const mirror = new Reflector(plazaGeo, {
-      // A plaza reflection reads fine at this size and costs a quarter of
-      // what a 512 map does.
-      textureWidth: 256,
-      textureHeight: 256,
-      color: 0xb9b4a8,
+      // Now that a water surface sits on top of it, the reflection is read
+      // through ripples and at grazing angles, so it earns the larger map.
+      textureWidth: 512,
+      textureHeight: 512,
+      color: 0x9fb8c4,
     });
     mirror.rotation.x = -Math.PI / 2;
     mirror.position.y = 0.012;

@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { places, WORLD_RADIUS } from '../data/world';
-import { buildWorld, type BuiltWorld } from './build';
+import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
+import { buildBunting, type Bunting } from './bunting';
+import { buildGrass, type Grass } from './grass';
+import { buildMotes, type Motes } from './motes';
+import { buildWater, type Water } from './water';
+import { windUniforms } from './shaders/wind';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
 import { createPost, type Post } from './post';
@@ -174,6 +179,22 @@ export function createEngine(
 
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
+
+  const grass: Grass = buildGrass(quality);
+  scene.add(grass.group);
+
+  const bunting: Bunting = buildBunting();
+  scene.add(bunting.group);
+
+  const motes: Motes = buildMotes(quality);
+  scene.add(motes.points);
+
+  const water: Water = buildWater(PLAZA_RADIUS);
+  scene.add(water.mesh);
+
+  // Reduced motion stops the weather dead: no sway, no flutter, no drift. The
+  // clock is frozen rather than merely scaled, so nothing creeps.
+  windUniforms.uWind.value = reducedMotion ? 0 : 1;
 
   const post: Post = createPost(renderer, scene, camera, sky.sunMesh, quality, EXPOSURE);
 
@@ -509,6 +530,11 @@ export function createEngine(
 
     // One write per frame reaches the sky dome and every patched material.
     skyUniforms.uTime.value = clock.elapsedTime;
+    // And one more reaches the grass, the flowers and the bunting together, so
+    // a gust crosses all three at once.
+    windUniforms.uWindTime.value = reducedMotion ? 0 : clock.elapsedTime;
+    windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
+    water.update(reducedMotion ? 0 : clock.elapsedTime);
     camera.updateMatrixWorld();
     skyUniforms.uSunDirView.value
       .copy(skyUniforms.uSunDir.value)
@@ -549,6 +575,10 @@ export function createEngine(
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
+      water.dispose();
+      motes.dispose();
+      bunting.dispose();
+      grass.dispose();
       terrain.dispose();
       world.dispose();
       scenery.dispose();
