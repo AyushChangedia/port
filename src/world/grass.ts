@@ -213,6 +213,15 @@ export interface GrassOptions {
   flowers?: boolean;
   /** Override the blade count, to separate a shader fault from sheer volume. */
   count?: number;
+  /**
+   * Which parts of the blade material to apply. Flowers share the wind patch
+   * and render fine, so the fault is in something only the blades do.
+   *   plain    - stock material: no sky shading, no wind, no blade colour
+   *   nowind   - sky shading only
+   *   nocolour - sky shading + wind, without the blade colour patch
+   *   onecell  - full material, but a single instanced mesh instead of 36
+   */
+  variant?: string;
 }
 
 export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}): Grass {
@@ -220,6 +229,7 @@ export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}):
   const disposables: { dispose(): void }[] = [];
   const wantBlades = options.blades !== false;
   const wantFlowers = options.flowers !== false;
+  const variant = options.variant ?? '';
 
   const target = options.count ?? (quality === 'high' ? 140000 : 12000);
   const normalScratch = new THREE.Vector3();
@@ -252,27 +262,33 @@ export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}):
     cells[cz * CELLS + cx].push(blade);
   }
 
-  const bladeMaterial = applySkyShading(
-    new THREE.MeshStandardMaterial({
-      roughness: 0.92,
-      metalness: 0,
-      side: THREE.DoubleSide,
-      envMapIntensity: 0.4,
-    }),
-    {
-      rimColor: 0xd8f0a8,
-      rimStrength: 1.1,
-      // Colour comes from the blade shader, not from a map.
-      ...windPatch(0.32, 'grass', bladeColour),
-    },
-  );
+  const bladeBase = new THREE.MeshStandardMaterial({
+    color: variant === 'plain' ? 0x6f9c48 : 0xffffff,
+    roughness: 0.92,
+    metalness: 0,
+    side: THREE.DoubleSide,
+    envMapIntensity: 0.4,
+  });
+
+  const bladeMaterial =
+    variant === 'plain'
+      ? bladeBase
+      : applySkyShading(bladeBase, {
+          rimColor: 0xd8f0a8,
+          rimStrength: 1.1,
+          // Colour comes from the blade shader, not from a map.
+          ...(variant === 'nowind'
+            ? {}
+            : windPatch(0.32, 'grass', variant === 'nocolour' ? undefined : bladeColour)),
+        });
   disposables.push(bladeMaterial);
 
   const blade = bladeGeometry();
   disposables.push(blade);
 
   const dummy = new THREE.Object3D();
-  for (const cell of cells) {
+  const drawCells = variant === 'onecell' ? [blades] : cells;
+  for (const cell of drawCells) {
     if (cell.length === 0) continue;
     const geometry = blade.clone();
     const tints = new Float32Array(cell.length);

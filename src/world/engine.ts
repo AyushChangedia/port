@@ -219,6 +219,7 @@ export function createEngine(
     : buildGrass(quality, {
         blades: !off.has('blades'),
         flowers: !off.has('flowers'),
+        variant: new URLSearchParams(window.location.search).get('blade') ?? '',
         ...(Number.isFinite(grassCount) && grassCount > 0 ? { count: grassCount } : {}),
       });
   if (grass) scene.add(grass.group);
