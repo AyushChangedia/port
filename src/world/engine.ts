@@ -4,6 +4,8 @@ import { places, WORLD_RADIUS } from '../data/world';
 import { buildWorld, type BuiltWorld } from './build';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
+import { createPost, type Post } from './post';
+import { skyUniforms } from './shaders/skyCommon';
 import { makeSky } from './sky';
 
 /**
@@ -44,6 +46,14 @@ const TURN_KEY = 1.9;
 const JUMP = 6.4;
 const GRAVITY = 20;
 
+/** Applied once, in the grade, since the renderer no longer tone maps. */
+const EXPOSURE = 1.15;
+/** Half-width of the shadow box that follows the player, in metres. */
+const SHADOW_BOX = 30;
+const SHADOW_MAP = 4096;
+/** How far the sun sits from the player. Only the direction matters. */
+const SUN_DISTANCE = 60;
+
 export function createEngine(
   canvas: HTMLCanvasElement,
   callbacks: EngineCallbacks,
@@ -52,7 +62,9 @@ export function createEngine(
 ): Engine | null {
   let renderer: THREE.WebGLRenderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high' });
+    // No MSAA: a composer renders into its own target, where the canvas
+    // antialias flag does nothing. SMAA in the chain does the work instead.
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   } catch {
     return null;
   }
@@ -72,12 +84,14 @@ export function createEngine(
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.shadowMap.enabled = quality === 'high';
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  // Physically based materials need tone mapping or every highlight clips.
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // The scene renders linear into a half-float buffer; exposure and ACES are
+  // applied once at the end of the post chain. Tone mapping here as well would
+  // apply the curve twice and crush the sun before bloom ever sees it.
+  renderer.toneMapping = THREE.NoToneMapping;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xdfe3e6, 80, 260);
+  // No scene.fog: every world material replaces three's fog outright with
+  // aerial perspective that takes the colour of the sky in the view direction.
 
   // A generated indoor-studio environment, used purely as a reflection probe.
   // It costs one render at startup and is what makes glass and metal read as
@@ -85,10 +99,13 @@ export function createEngine(
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
   scene.environment = envRT.texture;
-  scene.environmentIntensity = 0.55;
+  // Dimmed hard: the sky gradient and the rim light carry the lighting now, and
+  // a studio probe at full strength fights both.
+  scene.environmentIntensity = 0.35;
 
   const sky = makeSky();
   scene.add(sky.mesh);
+  scene.add(sky.sunHolder);
 
   const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
 
@@ -105,22 +122,43 @@ export function createEngine(
   frameForAspect();
 
   // Light: one sun for shape and shadow, one hemisphere so nothing goes black.
-  const sun = new THREE.DirectionalLight(0xfff4e2, 1.85);
-  sun.position.set(22, 34, 14);
+  const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
+  scene.add(sun);
+  scene.add(sun.target);
   if (quality === 'high') {
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 110;
-    const s = 44;
-    sun.shadow.camera.left = -s;
-    sun.shadow.camera.right = s;
-    sun.shadow.camera.top = s;
-    sun.shadow.camera.bottom = -s;
-    sun.shadow.bias = -0.0012;
+    sun.shadow.camera.far = SUN_DISTANCE * 2.4;
+    sun.shadow.camera.left = -SHADOW_BOX;
+    sun.shadow.camera.right = SHADOW_BOX;
+    sun.shadow.camera.top = SHADOW_BOX;
+    sun.shadow.camera.bottom = -SHADOW_BOX;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
+    sun.shadow.camera.updateProjectionMatrix();
   }
-  scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xc4bfb2, 1.15));
+
+  // Warm ground bounce against a cool sky: this is what keeps the shadow side
+  // coloured rather than grey and dead.
+  scene.add(new THREE.HemisphereLight(0x9fd4ff, 0xc8a870, 0.9));
+
+  /**
+   * Point the sun at the player.
+   *
+   * The shadow box is only 60m across so it can afford real resolution, which
+   * means it has to travel with you. Positions are snapped to the shadow map's
+   * texel size, otherwise every step makes the shadow edges crawl.
+   */
+  const texel = (SHADOW_BOX * 2) / SHADOW_MAP;
+  function aimSun(x: number, z: number): void {
+    const dir = skyUniforms.uSunDir.value;
+    const sx = Math.round(x / texel) * texel;
+    const sz = Math.round(z / texel) * texel;
+    sun.position.set(sx + dir.x * SUN_DISTANCE, dir.y * SUN_DISTANCE, sz + dir.z * SUN_DISTANCE);
+    sun.target.position.set(sx, 0, sz);
+    sun.target.updateMatrixWorld();
+  }
 
   const materials = createMaterials(quality);
   const world: BuiltWorld = buildWorld(quality, materials);
@@ -128,6 +166,8 @@ export function createEngine(
 
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
+
+  const post: Post = createPost(renderer, scene, camera, sky.sunMesh, quality, EXPOSURE);
 
   // ── Player state ─────────────────────────────────────────────────────────
   const pos = new THREE.Vector3(0, 0, 19);
@@ -305,6 +345,35 @@ export function createEngine(
     }
   }
 
+  // ── Autofocus ────────────────────────────────────────────────────────────
+  /**
+   * Depth of field follows whatever is straight ahead.
+   *
+   * Sampled every few frames rather than every frame — it raycasts the whole
+   * target set — and eased, so walking past a pillar does not snap the focus.
+   */
+  const CENTRE = new THREE.Vector2(0, 0);
+  const FOCUS_NEAR = 10;
+  const FOCUS_FAR = 45;
+  let focus = 18;
+  let focusTarget = 18;
+  let focusTick = 0;
+
+  function updateFocus(dt: number): void {
+    focusTick += 1;
+    if (focusTick % 4 === 0) {
+      raycaster.setFromCamera(CENTRE, camera);
+      const hit = raycaster.intersectObjects(world.targets, false)[0];
+      focusTarget = hit
+        ? THREE.MathUtils.clamp(hit.distance, FOCUS_NEAR, FOCUS_FAR)
+        : FOCUS_FAR;
+    }
+    // Reduced motion gets no focus pull at all — it is a slow easing camera
+    // move, which is exactly what that preference asks us not to do.
+    focus = reducedMotion ? focusTarget : focus + (focusTarget - focus) * Math.min(1, dt * 3.5);
+    post.setFocus(focus);
+  }
+
   // ── Frame loop ───────────────────────────────────────────────────────────
   const clock = new THREE.Clock();
   const forward = new THREE.Vector3();
@@ -324,10 +393,14 @@ export function createEngine(
         renderScale = Math.max(0.55, renderScale - 0.15);
         slowFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
+        // The composer's targets are sized from the drawing buffer, so they
+        // have to be rebuilt or the effects resolve at the old resolution.
+        post.resize();
       } else if (fastFrames > 120 && renderScale < 1) {
         renderScale = Math.min(1, renderScale + 0.15);
         fastFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
+        post.resize();
       }
     }
 
@@ -398,14 +471,24 @@ export function createEngine(
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
     camera.position.set(pos.x, EYE + height + bob, pos.z);
-    sky.mesh.position.set(pos.x, 0, pos.z);
+    sky.update(pos.x, pos.z);
+    aimSun(pos.x, pos.z);
     scenery.update(clock.elapsedTime);
     camera.rotation.set(0, 0, 0, 'YXZ');
     camera.rotateY(yaw + Math.PI);
     camera.rotateX(pitch);
 
+    // One write per frame reaches the sky dome and every patched material.
+    skyUniforms.uTime.value = clock.elapsedTime;
+    camera.updateMatrixWorld();
+    skyUniforms.uSunDirView.value
+      .copy(skyUniforms.uSunDir.value)
+      .transformDirection(camera.matrixWorldInverse);
+
+    updateFocus(dt);
+
     callbacks.onPose(pos.x, pos.z, yaw);
-    renderer.render(scene, camera);
+    post.render(dt);
   }
 
   frame();
@@ -414,6 +497,7 @@ export function createEngine(
     resize() {
       frameForAspect();
       renderer.setSize(window.innerWidth, window.innerHeight, false);
+      post.resize();
     },
     goTo,
     teleport,
@@ -435,6 +519,7 @@ export function createEngine(
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
+      post.dispose();
       world.dispose();
       scenery.dispose();
       materials.dispose();

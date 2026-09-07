@@ -1,18 +1,22 @@
 import * as THREE from 'three';
+import { applySkyShading } from './shaders/skyMaterial';
 
 /**
  * The material set.
  *
- * Everything is physically based so the environment map actually shows up:
- * polished stone picks up the sky, metal picks up its surroundings, and glass
- * reflects the world around it. Created once and shared by every mesh.
+ * Warm sandstone and aged gold under a cyan sky, rather than the dark grey PBR
+ * boxes this started as. Every material goes through `applySkyShading`, so all
+ * of them get the fresnel rim, the wrapped diffuse and the sky-coloured aerial
+ * perspective; only the rim settings differ per surface.
+ *
+ * Created once and shared by every mesh in the world.
  */
 export interface Materials {
   stone: THREE.MeshStandardMaterial;
   stoneLight: THREE.MeshStandardMaterial;
   accent: THREE.MeshStandardMaterial;
   metal: THREE.MeshStandardMaterial;
-  /** Reflective glazing. Real transmission on capable devices. */
+  /** Reflective glazing. Real clearcoat on capable devices. */
   glass: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
   /** Cheaper glass for the hundreds of distant towers. */
   glassFar: THREE.MeshStandardMaterial;
@@ -22,85 +26,113 @@ export interface Materials {
 }
 
 export function createMaterials(quality: 'high' | 'low'): Materials {
-  const stone = new THREE.MeshStandardMaterial({
-    color: 0x2a2a31,
-    roughness: 0.58,
-    metalness: 0.18,
-    envMapIntensity: 0.9,
-  });
+  const stone = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0xc9b79a,
+      roughness: 0.85,
+      metalness: 0,
+      envMapIntensity: 0.7,
+    }),
+  );
 
-  const stoneLight = new THREE.MeshStandardMaterial({
-    color: 0x40404a,
-    roughness: 0.42,
-    metalness: 0.28,
-    envMapIntensity: 1.1,
-  });
+  const stoneLight = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0xe4d6bc,
+      roughness: 0.8,
+      metalness: 0,
+      envMapIntensity: 0.8,
+    }),
+  );
 
-  const accent = new THREE.MeshStandardMaterial({
-    color: 0xb8391a,
-    roughness: 0.4,
-    metalness: 0.12,
-    envMapIntensity: 0.9,
-  });
+  // The one hot colour in the palette. A little emissive so it still reads at
+  // dusk and so bloom catches its edges.
+  const accent = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0xe86a3a,
+      roughness: 0.5,
+      metalness: 0,
+      emissive: new THREE.Color(0xe8562a),
+      emissiveIntensity: 0.35,
+      envMapIntensity: 0.9,
+    }),
+    { rimColor: 0xffd2a8, rimStrength: 1.2 },
+  );
 
-  const metal = new THREE.MeshStandardMaterial({
-    color: 0x9aa0a8,
-    roughness: 0.22,
-    metalness: 0.92,
-    envMapIntensity: 1.5,
-  });
+  // Aged gold rather than steel — grey metal is what made this read as a
+  // massing model more than any other single material.
+  const metal = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0xd9b26a,
+      roughness: 0.35,
+      metalness: 0.85,
+      envMapIntensity: 1.4,
+    }),
+    { rimColor: 0xffe9c4, rimStrength: 1.1 },
+  );
 
   /**
    * Glazing.
    *
-   * Deliberately NOT `transmission` — real refraction forces three to render
-   * the scene an extra time every frame, and on this many surfaces that alone
-   * halves the frame rate. Clearcoat over a tinted, reflective base gets
-   * within a hair of the look for a fraction of the cost.
+   * Still deliberately NOT `transmission` — real refraction forces three to
+   * render the scene an extra time every frame, and on this many surfaces that
+   * alone halves the frame rate. The strong rim does the work instead: on glass
+   * it *is* the glow on the panes.
    */
-  const glass: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial =
+  const glass: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial = applySkyShading(
     quality === 'high'
       ? new THREE.MeshPhysicalMaterial({
-          color: 0x8fb0c4,
+          color: 0xa8d8f0,
           roughness: 0.06,
-          metalness: 0.28,
+          metalness: 0.2,
           clearcoat: 1,
           clearcoatRoughness: 0.03,
           transparent: true,
-          opacity: 0.42,
-          envMapIntensity: 2,
+          opacity: 0.35,
+          envMapIntensity: 2.2,
         })
       : new THREE.MeshStandardMaterial({
-          color: 0x93aec0,
-          roughness: 0.08,
-          metalness: 0.42,
+          color: 0xa8d8f0,
+          roughness: 0.1,
+          metalness: 0.4,
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.45,
           envMapIntensity: 1.8,
-        });
+        }),
+    { rimColor: 0xdcf2ff, rimStrength: 1.8, rimPower: 2.2 },
+  );
 
   // The skyline is opaque on purpose: a few hundred transparent boxes cost
-  // depth sorting every frame and buy nothing at that distance. High metalness
-  // and low roughness read as glass regardless.
-  const glassFar = new THREE.MeshStandardMaterial({
-    color: 0xa9c0cf,
-    roughness: 0.12,
-    metalness: 0.72,
-    envMapIntensity: 1.8,
-  });
+  // depth sorting every frame and buy nothing at that distance.
+  const glassFar = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0xb4d2e8,
+      roughness: 0.14,
+      metalness: 0.7,
+      envMapIntensity: 1.6,
+    }),
+    { rimColor: 0xdcf2ff, rimStrength: 1.4 },
+  );
 
-  const ground = new THREE.MeshStandardMaterial({
-    color: 0xd8d3c8,
-    roughness: 0.88,
-    metalness: 0.04,
-    envMapIntensity: 0.5,
-  });
+  // Becomes vertex-coloured terrain in phase 2.
+  const ground = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0x7fa05a,
+      roughness: 0.95,
+      metalness: 0,
+      envMapIntensity: 0.4,
+    }),
+    { rimStrength: 0.5 },
+  );
 
-  const foliage = new THREE.MeshStandardMaterial({
-    color: 0x6e7a61,
-    roughness: 0.9,
-    metalness: 0,
-  });
+  const foliage = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      color: 0x6e9b4e,
+      roughness: 0.95,
+      metalness: 0,
+      envMapIntensity: 0.5,
+    }),
+    { rimColor: 0xd8f0a8, rimStrength: 1.2 },
+  );
 
   const all = [stone, stoneLight, accent, metal, glass, glassFar, ground, foliage];
 
