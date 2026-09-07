@@ -44,6 +44,47 @@ export function isCoarsePointer(): boolean {
   return !window.matchMedia('(pointer: fine)').matches;
 }
 
+let cachedGpu: 'weak' | 'capable' | null = null;
+
+/**
+ * What the GPU actually is.
+ *
+ * Cores and memory say nothing about graphics. A laptop with eight fast cores
+ * and 16GB can still be driving an integrated chip that cannot carry a shadow
+ * map, an HDR post chain and a hundred thousand instances at once — and
+ * guessing 'high' there does not degrade gracefully, it renders black.
+ */
+export function gpuClass(): 'weak' | 'capable' {
+  if (cachedGpu) return cachedGpu;
+  if (typeof window === 'undefined') return (cachedGpu = 'weak');
+
+  let name = '';
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as
+      | WebGLRenderingContext
+      | null;
+    if (gl) {
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      if (info) name = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    }
+  } catch {
+    return (cachedGpu = 'weak');
+  }
+
+  // Integrated and software adapters. Intel's discrete Arc parts are named
+  // "Arc", so they are deliberately not caught here.
+  const weak =
+    /(intel|hd graphics|uhd|iris|swiftshader|llvmpipe|softwar|microsoft basic|mesa|apple m1|adreno|mali|powervr)/i.test(name) &&
+    !/\barc\b/i.test(name);
+
+  // An unknown adapter is treated as weak: the cost of guessing high is a
+  // black screen, the cost of guessing low is slightly less bloom.
+  cachedGpu = name && !weak ? 'capable' : 'weak';
+  return cachedGpu;
+}
+
 let cachedTier: Tier | null = null;
 
 /**
@@ -70,6 +111,10 @@ export function deviceTier(): Tier {
   } else {
     cachedTier = 'low';
   }
+
+  // The GPU has the last word. Nothing about the CPU makes an integrated chip
+  // able to run the full pass.
+  if (gpuClass() === 'weak' && cachedTier === 'high') cachedTier = 'medium';
   return cachedTier;
 }
 

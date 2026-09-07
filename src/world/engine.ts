@@ -114,60 +114,6 @@ export function createEngine(
   // apply the curve twice and crush the sun before bloom ever sees it.
   renderer.toneMapping = THREE.NoToneMapping;
 
-  /**
-   * TEMPORARY — `?diag=1` puts shader and GL errors on the screen.
-   *
-   * The machine that sees the fault reports an empty console, and this session
-   * has no GPU to reproduce it on, so the errors need somewhere visible to go.
-   */
-  if (new URLSearchParams(window.location.search).get('diag') === '1') {
-    const panel = document.createElement('pre');
-    panel.style.cssText =
-      'position:fixed;inset:8px 8px auto 8px;z-index:99999;max-height:70vh;overflow:auto;' +
-      'background:#111;color:#7fdc7f;font:11px/1.4 monospace;padding:10px;white-space:pre-wrap;' +
-      'border:1px solid #3a3;border-radius:6px';
-    panel.textContent = 'diagnostics on — waiting for a frame…\n';
-    document.body.appendChild(panel);
-    const say = (text: string) => {
-      panel.textContent += `${text}\n`;
-    };
-
-    renderer.debug.checkShaderErrors = true;
-    renderer.debug.onShaderError = (_gl, _program, glVertexShader, glFragmentShader) => {
-      say('=== SHADER ERROR ===');
-      const gl2 = renderer.getContext();
-      for (const [label, shader] of [
-        ['vertex', glVertexShader],
-        ['fragment', glFragmentShader],
-      ] as const) {
-        const log = gl2.getShaderInfoLog(shader) ?? '';
-        if (log.trim()) say(`${label}: ${log.trim().slice(0, 700)}`);
-      }
-    };
-
-    const gl = renderer.getContext();
-    const names: Record<number, string> = {
-      1280: 'INVALID_ENUM', 1281: 'INVALID_VALUE', 1282: 'INVALID_OPERATION',
-      1285: 'OUT_OF_MEMORY', 1286: 'INVALID_FRAMEBUFFER_OPERATION', 37442: 'CONTEXT_LOST',
-    };
-    const seen = new Set<string>();
-    window.setInterval(() => {
-      const code = gl.getError();
-      if (code === 0) return;
-      const name = names[code] ?? String(code);
-      if (seen.has(name)) return;
-      seen.add(name);
-      say(`GL ERROR: ${name}`);
-    }, 200);
-
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-    say(`gpu: ${debugInfo ? String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)) : 'unavailable'}`);
-    say(`webgl2: ${'drawBuffers' in gl} · maxVaryings: ${gl.getParameter(gl.MAX_VARYING_VECTORS)}`);
-    say(`maxVertexAttribs: ${gl.getParameter(gl.MAX_VERTEX_ATTRIBS)}`);
-    say(`maxVertexUniforms: ${gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS)}`);
-    say(`colorBufferFloat: ${!!gl.getExtension('EXT_color_buffer_float')}`);
-  }
-
   const scene = new THREE.Scene();
   // No scene.fog: every world material replaces three's fog outright with
   // aerial perspective that takes the colour of the sky in the view direction.
@@ -253,42 +199,17 @@ export function createEngine(
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
 
-  /**
-   * TEMPORARY — bisecting a black screen that only appears on real GPUs.
-   *
-   * The phase 3 layers can be switched off individually from the URL, e.g.
-   * `?off=grass` or `?off=motes,water`, so the fault can be located on a
-   * machine this session cannot otherwise reach. Remove once it is found.
-   */
-  const off = new Set(
-    (new URLSearchParams(window.location.search).get('off') ?? '')
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean),
-  );
+  const grass: Grass = buildGrass(quality);
+  scene.add(grass.group);
 
-  const grassCount = Number(new URLSearchParams(window.location.search).get('grass'));
-  const grass: Grass | null = off.has('grass')
-    ? null
-    : buildGrass(quality, {
-        blades: !off.has('blades'),
-        flowers: !off.has('flowers'),
-        // Blade wind is off by default until the fault in it is understood.
-        // Flowers and bunting run the same patch without trouble, so they keep
-        // theirs; only the blades are held back.
-        variant: new URLSearchParams(window.location.search).get('blade') ?? 'nowind',
-        ...(Number.isFinite(grassCount) && grassCount > 0 ? { count: grassCount } : {}),
-      });
-  if (grass) scene.add(grass.group);
+  const bunting: Bunting = buildBunting();
+  scene.add(bunting.group);
 
-  const bunting: Bunting | null = off.has('bunting') ? null : buildBunting();
-  if (bunting) scene.add(bunting.group);
+  const motes: Motes = buildMotes(quality);
+  scene.add(motes.points);
 
-  const motes: Motes | null = off.has('motes') ? null : buildMotes(quality);
-  if (motes) scene.add(motes.points);
-
-  const water: Water | null = off.has('water') ? null : buildWater(PLAZA_RADIUS);
-  if (water) scene.add(water.mesh);
+  const water: Water = buildWater(PLAZA_RADIUS);
+  scene.add(water.mesh);
 
   // Reduced motion stops the weather dead: no sway, no flutter, no drift. The
   // clock is frozen rather than merely scaled, so nothing creeps.
@@ -647,7 +568,7 @@ export function createEngine(
     // a gust crosses all three at once.
     windUniforms.uWindTime.value = reducedMotion ? 0 : clock.elapsedTime;
     windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
-    water?.update(reducedMotion ? 0 : clock.elapsedTime);
+    water.update(reducedMotion ? 0 : clock.elapsedTime);
     camera.updateMatrixWorld();
     skyUniforms.uSunDirView.value
       .copy(skyUniforms.uSunDir.value)
@@ -689,10 +610,10 @@ export function createEngine(
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
-      water?.dispose();
-      motes?.dispose();
-      bunting?.dispose();
-      grass?.dispose();
+      water.dispose();
+      motes.dispose();
+      bunting.dispose();
+      grass.dispose();
       terrain.dispose();
       world.dispose();
       scenery.dispose();

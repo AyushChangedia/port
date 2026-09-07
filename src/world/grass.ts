@@ -194,8 +194,29 @@ transformed.y -= press * 0.12 * vAlong;`,
   };
 }
 
-/** Blade colour: darker at the root, pale toward the tip, varied per blade. */
+/**
+ * Blade colour: darker at the root, pale toward the tip, varied per blade.
+ *
+ * Supplies its own varyings. The wind patch used to provide them, and with the
+ * wind gone the fragment stage would otherwise read varyings the vertex stage
+ * never writes.
+ */
 function bladeColour(shader: THREE.WebGLProgramParametersWithUniforms): void {
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+attribute float aTint;
+varying float vAlong;
+varying float vTint;`,
+    )
+    .replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+vAlong = clamp( transformed.y / ${BLADE_HEIGHT.toFixed(3)}, 0.0, 1.0 );
+vTint = aTint;`,
+    );
+
   shader.fragmentShader = shader.fragmentShader
     .replace(
       '#include <common>',
@@ -213,36 +234,16 @@ varying float vTint;`,
     );
 }
 
-/** TEMPORARY — knobs for bisecting the black screen. See engine.ts. */
-export interface GrassOptions {
-  blades?: boolean;
-  flowers?: boolean;
-  /** Override the blade count, to separate a shader fault from sheer volume. */
-  count?: number;
-  /**
-   * Which parts of the blade material to apply. Flowers share the wind patch
-   * and render fine, so the fault is in something only the blades do.
-   *   plain    - stock material: no sky shading, no wind, no blade colour
-   *   nowind   - sky shading only
-   *   nocolour - sky shading + wind, without the blade colour patch
-   *   onecell  - full material, but a single instanced mesh instead of 36
-   */
-  variant?: string;
-}
-
-export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}): Grass {
+export function buildGrass(quality: 'high' | 'low'): Grass {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
-  const wantBlades = options.blades !== false;
-  const wantFlowers = options.flowers !== false;
-  const variant = options.variant ?? '';
 
-  const target = options.count ?? (quality === 'high' ? 140000 : 12000);
+  const target = quality === 'high' ? 140000 : 12000;
   const normalScratch = new THREE.Vector3();
 
   // ── Placement ──────────────────────────────────────────────────────────────
   const blades: Blade[] = [];
-  const maxAttempts = wantBlades ? target * 6 : 0;
+  const maxAttempts = target * 6;
   for (let i = 0; i < maxAttempts && blades.length < target; i += 1) {
     const a = rnd(i * 1.37) * Math.PI * 2;
     const r = 13 + Math.sqrt(rnd(i * 2.71)) * (WORLD_RADIUS - 15);
@@ -268,33 +269,34 @@ export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}):
     cells[cz * CELLS + cx].push(blade);
   }
 
-  const bladeBase = new THREE.MeshStandardMaterial({
-    color: variant === 'plain' ? 0x6f9c48 : 0xffffff,
-    roughness: 0.92,
-    metalness: 0,
-    side: THREE.DoubleSide,
-    envMapIntensity: 0.4,
-  });
-
-  const bladeMaterial =
-    variant === 'plain'
-      ? bladeBase
-      : applySkyShading(bladeBase, {
-          rimColor: 0xd8f0a8,
-          rimStrength: 1.1,
-          // Colour comes from the blade shader, not from a map.
-          ...(variant === 'nowind'
-            ? {}
-            : windPatch(0.32, 'grass', variant === 'nocolour' ? undefined : bladeColour)),
-        });
+  /**
+   * The blades do not take the wind, and that is deliberate.
+   *
+   * Bisected on an Intel UHD 730 through ANGLE/D3D11: the sky shading alone is
+   * fine, adding the wind vertex patch renders the entire frame black, and it
+   * does so with no shader error, no link error and no GL error. The identical
+   * patch on the flowers and the bunting is fine on the same machine, and the
+   * fault does not scale with instance count, so it is not cost. Rather than
+   * ship something that turns a whole class of machine black, the blades stand
+   * still and the flowers and flags carry the wind. Revisit with that hardware
+   * in hand.
+   */
+  const bladeMaterial = applySkyShading(
+    new THREE.MeshStandardMaterial({
+      roughness: 0.92,
+      metalness: 0,
+      side: THREE.DoubleSide,
+      envMapIntensity: 0.4,
+    }),
+    { rimColor: 0xd8f0a8, rimStrength: 1.1, cacheKey: 'grass', patch: bladeColour },
+  );
   disposables.push(bladeMaterial);
 
   const blade = bladeGeometry();
   disposables.push(blade);
 
   const dummy = new THREE.Object3D();
-  const drawCells = variant === 'onecell' ? [blades] : cells;
-  for (const cell of drawCells) {
+  for (const cell of cells) {
     if (cell.length === 0) continue;
     const geometry = blade.clone();
     const tints = new Float32Array(cell.length);
@@ -322,7 +324,7 @@ export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}):
   }
 
   // ── Flowers ────────────────────────────────────────────────────────────────
-  const flowerCount = wantFlowers ? (quality === 'high' ? 6000 : 700) : 0;
+  const flowerCount = quality === 'high' ? 6000 : 700;
   const petalTexture = flowerTexture();
   disposables.push(petalTexture);
 
@@ -378,7 +380,7 @@ varying float vTint;`,
   disposables.push(cross);
 
   const PALETTE = [0xf58bc0, 0xf2a8d4, 0xffffff, 0xffd86e].map((hex) => new THREE.Color(hex));
-  const flowers = new THREE.InstancedMesh(cross, flowerMaterial, Math.max(1, flowerCount));
+  const flowers = new THREE.InstancedMesh(cross, flowerMaterial, flowerCount);
   const colors = new Float32Array(flowerCount * 3);
   const fTints = new Float32Array(flowerCount);
   const fPhases = new Float32Array(flowerCount);

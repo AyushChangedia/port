@@ -37,9 +37,11 @@ export default function App() {
 
     // Shadows carry most of the sense of solidity here and the scene is only a
     // few dozen meshes, so anything that is not a phone gets the full pass.
+    // Only a genuinely capable GPU gets the full pass. 'medium' now means an
+    // integrated chip that reports plenty of CPU, and it belongs on the light
+    // path with the phones, not with the discrete cards.
     const tier = deviceTier();
-    const quality: 'high' | 'low' =
-      tier === 'high' || tier === 'medium' ? 'high' : 'low';
+    const quality: 'high' | 'low' = tier === 'high' ? 'high' : 'low';
     const engine = createEngine(
       canvas,
       {
