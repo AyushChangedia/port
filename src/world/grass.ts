@@ -207,16 +207,26 @@ varying float vTint;`,
     );
 }
 
-export function buildGrass(quality: 'high' | 'low'): Grass {
+/** TEMPORARY — knobs for bisecting the black screen. See engine.ts. */
+export interface GrassOptions {
+  blades?: boolean;
+  flowers?: boolean;
+  /** Override the blade count, to separate a shader fault from sheer volume. */
+  count?: number;
+}
+
+export function buildGrass(quality: 'high' | 'low', options: GrassOptions = {}): Grass {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
+  const wantBlades = options.blades !== false;
+  const wantFlowers = options.flowers !== false;
 
-  const target = quality === 'high' ? 140000 : 12000;
+  const target = options.count ?? (quality === 'high' ? 140000 : 12000);
   const normalScratch = new THREE.Vector3();
 
   // ── Placement ──────────────────────────────────────────────────────────────
   const blades: Blade[] = [];
-  const maxAttempts = target * 6;
+  const maxAttempts = wantBlades ? target * 6 : 0;
   for (let i = 0; i < maxAttempts && blades.length < target; i += 1) {
     const a = rnd(i * 1.37) * Math.PI * 2;
     const r = 13 + Math.sqrt(rnd(i * 2.71)) * (WORLD_RADIUS - 15);
@@ -290,7 +300,7 @@ export function buildGrass(quality: 'high' | 'low'): Grass {
   }
 
   // ── Flowers ────────────────────────────────────────────────────────────────
-  const flowerCount = quality === 'high' ? 6000 : 700;
+  const flowerCount = wantFlowers ? (quality === 'high' ? 6000 : 700) : 0;
   const petalTexture = flowerTexture();
   disposables.push(petalTexture);
 
@@ -346,7 +356,7 @@ varying float vTint;`,
   disposables.push(cross);
 
   const PALETTE = [0xf58bc0, 0xf2a8d4, 0xffffff, 0xffd86e].map((hex) => new THREE.Color(hex));
-  const flowers = new THREE.InstancedMesh(cross, flowerMaterial, flowerCount);
+  const flowers = new THREE.InstancedMesh(cross, flowerMaterial, Math.max(1, flowerCount));
   const colors = new Float32Array(flowerCount * 3);
   const fTints = new Float32Array(flowerCount);
   const fPhases = new Float32Array(flowerCount);

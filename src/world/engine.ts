@@ -213,7 +213,14 @@ export function createEngine(
       .filter(Boolean),
   );
 
-  const grass: Grass | null = off.has('grass') ? null : buildGrass(quality);
+  const grassCount = Number(new URLSearchParams(window.location.search).get('grass'));
+  const grass: Grass | null = off.has('grass')
+    ? null
+    : buildGrass(quality, {
+        blades: !off.has('blades'),
+        flowers: !off.has('flowers'),
+        ...(Number.isFinite(grassCount) && grassCount > 0 ? { count: grassCount } : {}),
+      });
   if (grass) scene.add(grass.group);
 
   const bunting: Bunting | null = off.has('bunting') ? null : buildBunting();
