@@ -158,7 +158,14 @@ ${WIND_GLSL}`,
 vAlong = clamp( transformed.y / ${BLADE_HEIGHT.toFixed(3)}, 0.0, 1.0 );
 vTint = aTint;
 
-vec4 gustWorld = modelMatrix * instanceMatrix * vec4( 0.0, 0.0, 0.0, 1.0 );
+// Guarded exactly as three guards its own instancing maths: an unguarded
+// instanceMatrix is a compile error the moment this material is ever used on
+// a non-instanced mesh.
+vec4 gustLocal = vec4( 0.0, 0.0, 0.0, 1.0 );
+#ifdef USE_INSTANCING
+	gustLocal = instanceMatrix * gustLocal;
+#endif
+vec4 gustWorld = modelMatrix * gustLocal;
 float gust = windField( gustWorld.xz ) * uWind;
 
 // Weighted by the square of the distance up the blade, so it bends from the
@@ -172,15 +179,14 @@ transformed.x += sin( uWindTime * 6.0 + aPhase ) * 0.02 * pow( vAlong, 3.0 ) * u
 
 // Push away from the player's feet. This is the detail that sells the meadow:
 // walking through it should displace it.
+// Branchless, and normalised by hand: normalize() of a near-zero vector is
+// undefined, and this one goes to zero exactly when you stand on a blade.
 vec2 fromPlayer = gustWorld.xz - uPlayer.xz;
 float dist = length( fromPlayer );
 float press = 1.0 - smoothstep( 0.0, 1.6, dist );
-if ( press > 0.0 ) {
-  vec2 push = normalize( fromPlayer + vec2( 1e-4 ) ) * press * 0.45 * vAlong;
-  transformed.x += push.x;
-  transformed.z += push.y;
-  transformed.y -= press * 0.12 * vAlong;
-}`,
+vec2 pushDir = fromPlayer / max( dist, 0.001 );
+transformed.xz += pushDir * press * 0.45 * vAlong;
+transformed.y -= press * 0.12 * vAlong;`,
         );
 
       fragment?.(shader);
