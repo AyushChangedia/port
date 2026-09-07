@@ -66,7 +66,7 @@ function wrappedLightingChunk(): string {
     .replace(
       irradianceLine,
       `${irradianceLine}
-	float skyWrapNdotL = pow( saturate( dot( geometryNormal, directLight.direction ) * 0.5 + 0.5 ), 1.6 );
+	float skyWrapNdotL = pow( saturate( dot( geometryNormal, directLight.direction ) * 0.5 + 0.5 ), 2.4 );
 	vec3 skyWrapIrradiance = skyWrapNdotL * directLight.color;`,
     )
     .replace(

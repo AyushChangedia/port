@@ -30,6 +30,20 @@ const CLIFF_END = WORLD_RADIUS + CLIFF_RUN;
 const PLAZA_FLAT = 12;
 const PLAZA_FALLOFF = 20;
 
+/**
+ * The pool is a basin cut into the ground, not a disc lying on top of it.
+ *
+ * A flat blue circle on flat ground reads as painted floor however good the
+ * shader is — water needs somewhere to sit. It is placed off to one side of
+ * the plaza, in the widest gap between two paths: a ring of water around the
+ * arrival monument would look better and make you wade to reach it.
+ */
+export const POOL_CENTRE: [number, number] = [-7.5, -0.8];
+export const POOL_RADIUS = 3.3;
+const POOL_DEPTH = 0.75;
+/** The waterline: below the rim, above the floor of the basin. */
+export const POOL_SURFACE = -0.28;
+
 /** Structures are box geometry with no foundations, so each gets a level pad. */
 const PAD_FLAT = 2.5;
 const PAD_FALLOFF = 9;
@@ -103,6 +117,12 @@ export function terrainHeight(x: number, z: number): number {
   if (radius >= CLIFF_END) return CLIFF_FLOOR;
 
   let h = rolling(x, z) * (1 - flattenAmount(x, z));
+
+  // Cut the basin, with a soft lip so the ground dishes into it.
+  const poolDist = Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]);
+  if (poolDist < POOL_RADIUS + 1.6) {
+    h -= (1 - smoothstep(POOL_RADIUS - 0.6, POOL_RADIUS + 1.6, poolDist)) * POOL_DEPTH;
+  }
 
   if (radius > WORLD_RADIUS) {
     const t = smoothstep(0, 1, (radius - WORLD_RADIUS) / CLIFF_RUN);

@@ -10,7 +10,7 @@ import { windUniforms } from './shaders/wind';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
 import { createPost, type Post } from './post';
-import { buildTerrain, raycastTerrain, terrainHeight, type Terrain } from './terrain';
+import { buildTerrain, POOL_CENTRE, POOL_SURFACE, raycastTerrain, terrainHeight, type Terrain } from './terrain';
 import { skyUniforms } from './shaders/skyCommon';
 import { makeSky } from './sky';
 
@@ -57,6 +57,8 @@ const EXPOSURE = 1.15;
 /** Half-width of the shadow box that follows the player, in metres. */
 const SHADOW_BOX = 30;
 const SHADOW_MAP = 4096;
+/** Integrated parts cannot afford 4096, but they can afford this. */
+const SHADOW_MAP_LIGHT = 2048;
 /** How far the sun sits from the player. Only the direction matters. */
 const SUN_DISTANCE = 60;
 
@@ -108,7 +110,10 @@ export function createEngine(
   let fastFrames = 0;
   renderer.setPixelRatio(maxDpr);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.shadowMap.enabled = quality === 'high';
+  // Shadows on everywhere. Turning them off on the light path is what made
+  // that path read as flat cardboard: nearly all the sense of form in this art
+  // direction comes from contact shadow, not from the post chain.
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // The scene renders linear into a half-float buffer; exposure and ACES are
   // applied once at the end of the post chain. Tone mapping here as well would
@@ -127,7 +132,7 @@ export function createEngine(
   scene.environment = envRT.texture;
   // Dimmed hard: the sky gradient and the rim light carry the lighting now, and
   // a studio probe at full strength fights both.
-  scene.environmentIntensity = 0.35;
+  scene.environmentIntensity = 0.22;
 
   const sky = makeSky();
   scene.add(sky.mesh);
@@ -148,12 +153,13 @@ export function createEngine(
   frameForAspect();
 
   // Light: one sun for shape and shadow, one hemisphere so nothing goes black.
-  const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
+  const sun = new THREE.DirectionalLight(0xfff1d6, 2.9);
   scene.add(sun);
   scene.add(sun.target);
-  if (quality === 'high') {
+  {
     sun.castShadow = true;
-    sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
+    const size = quality === 'high' ? SHADOW_MAP : SHADOW_MAP_LIGHT;
+    sun.shadow.mapSize.set(size, size);
     // Depth only: the default also allocates colour, which is wasted here and
     // counts against the same GPU memory budget as the post chain.
     sun.shadow.autoUpdate = true;
@@ -169,8 +175,9 @@ export function createEngine(
   }
 
   // Warm ground bounce against a cool sky: this is what keeps the shadow side
-  // coloured rather than grey and dead.
-  scene.add(new THREE.HemisphereLight(0x9fd4ff, 0xc8a870, 0.9));
+  // coloured rather than grey and dead. Kept low — at 0.9 it filled every
+  // shadow to the point that nothing in the scene had any weight.
+  scene.add(new THREE.HemisphereLight(0x9fd4ff, 0xc8a870, 0.5));
 
   /**
    * Point the sun at the player.
@@ -179,7 +186,7 @@ export function createEngine(
    * means it has to travel with you. Positions are snapped to the shadow map's
    * texel size, otherwise every step makes the shadow edges crawl.
    */
-  const texel = (SHADOW_BOX * 2) / SHADOW_MAP;
+  const texel = (SHADOW_BOX * 2) / (quality === 'high' ? SHADOW_MAP : SHADOW_MAP_LIGHT);
   function aimSun(x: number, z: number): void {
     const dir = skyUniforms.uSunDir.value;
     const sx = Math.round(x / texel) * texel;
@@ -215,7 +222,8 @@ export function createEngine(
   const motes: Motes = buildMotes(quality);
   scene.add(motes.points);
 
-  const water: Water = buildWater(PLAZA_RADIUS);
+  const water: Water = buildWater(PLAZA_RADIUS, POOL_CENTRE);
+  water.mesh.position.set(POOL_CENTRE[0], POOL_SURFACE, POOL_CENTRE[1]);
   scene.add(water.mesh);
 
   // Reduced motion stops the weather dead: no sway, no flutter, no drift. The

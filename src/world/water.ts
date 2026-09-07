@@ -21,7 +21,7 @@ export interface Water {
   dispose(): void;
 }
 
-export function buildWater(radius: number): Water {
+export function buildWater(radius: number, centre: [number, number] = [0, 0]): Water {
   const geometry = new THREE.CircleGeometry(radius, 96);
   geometry.rotateX(-Math.PI / 2);
 
@@ -32,6 +32,7 @@ export function buildWater(radius: number): Water {
       uTime: { value: 0 },
       uWind: windUniforms.uWind,
       uRadius: { value: radius },
+      uCentre: { value: new THREE.Vector2() },
       uDeep: { value: new THREE.Color(0x4fa8c8) },
       uShore: { value: new THREE.Color(0x8fe3ff) },
     },
@@ -55,6 +56,7 @@ export function buildWater(radius: number): Water {
       precision highp float;
       uniform float uTime;
       uniform float uRadius;
+      uniform vec2 uCentre;
       uniform vec3 uDeep;
       uniform vec3 uShore;
       varying vec3 vWorld;
@@ -63,7 +65,7 @@ export function buildWater(radius: number): Water {
       ${SKY_NOISE_GLSL}
 
       void main() {
-        vec2 p = vWorld.xz;
+        vec2 p = vWorld.xz - uCentre;
 
         // Two ripple fields scrolling against each other. Taking the derivative
         // of the noise rather than the noise itself gives lines with crests,
@@ -103,11 +105,9 @@ export function buildWater(radius: number): Water {
     `,
   });
 
+  material.uniforms.uCentre.value.set(centre[0], centre[1]);
+
   const mesh = new THREE.Mesh(geometry, material);
-  // Above the reflector at 0.012 *and* above the paths at 0.04. Sitting under
-  // the paths is what made the pool read as a striped disc: the path ribbons
-  // ran straight through the surface as pale wedges.
-  mesh.position.y = 0.075;
   mesh.renderOrder = 2;
 
   return {

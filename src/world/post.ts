@@ -73,6 +73,9 @@ class GradeEffect extends Effect {
         color = mix( color, color * uHighlightTint, smoothstep( 0.55, 1.0, luma ) * 0.5 );
 
         color = mix( vec3( luma ), color, uSaturation );
+        // An S-curve. ACES rolls the highlights off but leaves the midtones
+        // limp, and without this the whole frame sits in a narrow pale band.
+        color = clamp( ( color - 0.5 ) * 1.18 + 0.5, 0.0, 1.0 );
 
         vec2 v = uv - 0.5;
         color *= 1.0 - dot( v, v ) * uVignette * 1.6;
@@ -86,7 +89,7 @@ class GradeEffect extends Effect {
           ['uExposure', new THREE.Uniform(exposure)],
           ['uShadowTint', new THREE.Uniform(new THREE.Color(0x1a2b45))],
           ['uHighlightTint', new THREE.Uniform(new THREE.Color(0xffe9c4))],
-          ['uSaturation', new THREE.Uniform(1.12)],
+          ['uSaturation', new THREE.Uniform(1.3)],
           ['uVignette', new THREE.Uniform(0.28)],
         ]),
       },

@@ -3,7 +3,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { places, WORLD_RADIUS, type Place } from '../data/world';
 import { makeSign } from './labels';
 import type { Materials } from './materials';
-import { terrainHeight } from './terrain';
+import { POOL_CENTRE, POOL_RADIUS, POOL_SURFACE, terrainHeight } from './terrain';
 
 /**
  * Builds the world.
@@ -26,7 +26,7 @@ export interface BuiltWorld {
 const ACCENT = 0xb8391a;
 
 /** The pool at the centre of the plaza. water.ts surfaces it. */
-export const PLAZA_RADIUS = 11.5;
+export const PLAZA_RADIUS = POOL_RADIUS;
 
 export function buildWorld(quality: 'high' | 'low', materials: Materials): BuiltWorld {
   const root = new THREE.Group();
@@ -88,7 +88,9 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   // a glossy floor where it cannot. It is what makes the monument feel like it
   // is standing on something. The plaza is flattened to y=0 by the terrain's
   // mask, so a flat disc is still correct here.
-  const plazaGeo = track(new THREE.CircleGeometry(PLAZA_RADIUS, 96));
+  // The reflector is the pool's floor, so it sits in the basin rather than
+  // covering the whole plaza.
+  const plazaGeo = track(new THREE.CircleGeometry(PLAZA_RADIUS, 64));
   if (quality === 'high') {
     const mirror = new Reflector(plazaGeo, {
       // Now that a water surface sits on top of it, the reflection is read
@@ -98,7 +100,7 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
       color: 0x9fb8c4,
     });
     mirror.rotation.x = -Math.PI / 2;
-    mirror.position.y = 0.012;
+    mirror.position.set(POOL_CENTRE[0], POOL_SURFACE - 0.02, POOL_CENTRE[1]);
     root.add(mirror);
     disposables.push({ dispose: () => mirror.dispose() });
   } else {
@@ -107,7 +109,7 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
     }));
     const plaza = new THREE.Mesh(plazaGeo, plazaMat);
     plaza.rotation.x = -Math.PI / 2;
-    plaza.position.y = 0.012;
+    plaza.position.set(POOL_CENTRE[0], POOL_SURFACE - 0.02, POOL_CENTRE[1]);
     root.add(plaza);
   }
 

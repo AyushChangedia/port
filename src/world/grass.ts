@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { places, WORLD_RADIUS } from '../data/world';
 import { applySkyShading } from './shaders/skyMaterial';
 import { WIND_GLSL, windUniforms } from './shaders/wind';
-import { terrainHeight, terrainNormal } from './terrain';
+import { POOL_CENTRE, POOL_RADIUS, terrainHeight, terrainNormal } from './terrain';
 
 /**
  * The meadow.
@@ -118,7 +118,9 @@ interface Blade {
 function rejects(x: number, z: number, normalScratch: THREE.Vector3): boolean {
   const radius = Math.hypot(x, z);
   // The plaza stays clear, and nothing grows past the boundary.
-  if (radius < 13 || radius > WORLD_RADIUS - 1.5) return true;
+  if (radius < 11.5 || radius > WORLD_RADIUS - 1.5) return true;
+  // Nothing grows in the pool.
+  if (Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]) < POOL_RADIUS + 1.2) return true;
 
   const slope = 1 - terrainNormal(x, z, normalScratch).y;
   if (slope > 0.45) return true;
@@ -347,6 +349,8 @@ export function buildGrass(quality: 'high' | 'low', density = 140000): Grass {
     mesh.instanceMatrix.needsUpdate = true;
     // Frustum culling is the entire reason for the grid, so the bounds have to
     // be real — never frustumCulled = false here.
+    // Grass in shadow is most of what grounds it to the terrain.
+    mesh.receiveShadow = true;
     mesh.computeBoundingSphere();
     disposables.push(geometry);
     group.add(mesh);
