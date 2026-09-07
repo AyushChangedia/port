@@ -56,6 +56,9 @@ export default function App() {
       },
       quality,
       prefersReducedMotion(),
+      // Geometry is cheap even where the post chain is not, so an integrated
+      // desktop GPU still gets a full meadow — only a phone gets a thin one.
+      tier === 'low' ? 20000 : tier === 'medium' ? 95000 : 140000,
     );
 
     if (!engine) {

@@ -72,30 +72,42 @@ export function buildWater(radius: number): Water {
         float b = skyFbm( p * 1.7 - vec2( uTime * 0.031, uTime * 0.052 ) );
         float ripple = ( a - b );
 
-        // Grazing angles go to mirror, straight down goes to teal.
-        float fres = pow( 1.0 - clamp( normalize( vToEye ).y, 0.0, 1.0 ), 3.0 );
+        // The ripples perturb the surface normal rather than only its colour;
+        // without that the fresnel is a flat radial gradient and the whole pool
+        // reads as one painted disc.
+        vec2 slope = vec2( dFdx( ripple ), dFdy( ripple ) ) * 26.0;
+        vec3 normal = normalize( vec3( -slope.x, 1.0, -slope.y ) );
+        vec3 eye = normalize( vToEye );
+        float fres = pow( 1.0 - clamp( dot( normal, eye ), 0.0, 1.0 ), 3.2 );
 
-        vec3 col = uDeep;
+        float dist = length( p );
+        // Shallower toward the rim, so the colour has somewhere to go.
+        float depth = smoothstep( uRadius, uRadius * 0.45, dist );
+        vec3 col = mix( uShore, uDeep, depth );
 
-        // Thin bright caustic lines, where the two fields nearly cancel.
-        float caustic = smoothstep( 0.015, 0.0, abs( ripple ) );
-        col += uShore * caustic * 0.5;
+        // Thin bright caustics where the two fields nearly cancel.
+        float caustic = smoothstep( 0.012, 0.0, abs( ripple ) ) * ( 0.35 + depth * 0.5 );
+        col += uShore * caustic * 0.7;
 
-        // A soft glow around the rim, where the water is shallow.
-        float edge = 1.0 - smoothstep( uRadius - 1.6, uRadius, length( p ) );
-        col = mix( col + uShore * 0.55, col, edge );
+        // A wet band at the shoreline rather than a hard cut circle.
+        float shore = 1.0 - smoothstep( uRadius - 2.2, uRadius - 0.15, dist );
+        col += uShore * ( 1.0 - shore ) * 0.35;
 
-        // Opaque looking down, nearly clear at grazing so the mirror reads.
-        float alpha = mix( 0.82, 0.12, fres );
-        alpha = max( alpha, caustic * 0.5 );
+        // Never fully opaque: the mirror underneath has to carry the sky, or
+        // this is just a blue layer. Clears entirely at the very edge.
+        float alpha = mix( 0.52, 0.06, fres ) * depth;
+        alpha = max( alpha, caustic * 0.55 );
+        alpha *= smoothstep( uRadius, uRadius - 0.5, dist );
         gl_FragColor = vec4( col, alpha );
       }
     `,
   });
 
   const mesh = new THREE.Mesh(geometry, material);
-  // Just above the reflector beneath it, which sits at 0.012.
-  mesh.position.y = 0.03;
+  // Above the reflector at 0.012 *and* above the paths at 0.04. Sitting under
+  // the paths is what made the pool read as a striped disc: the path ribbons
+  // ran straight through the surface as pale wedges.
+  mesh.position.y = 0.075;
   mesh.renderOrder = 2;
 
   return {

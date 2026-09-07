@@ -65,6 +65,7 @@ export function createEngine(
   callbacks: EngineCallbacks,
   quality: 'high' | 'low',
   reducedMotion = false,
+  grassDensity = 140000,
 ): Engine | null {
   let renderer: THREE.WebGLRenderer;
   try {
@@ -199,7 +200,13 @@ export function createEngine(
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
 
-  const grass: Grass = buildGrass(quality);
+  /**
+   * The meadow's density follows the GPU's geometry budget, not the post
+   * chain's. An integrated part renders a hundred thousand static blades
+   * comfortably; what it cannot carry is the HDR chain, and those are separate
+   * questions.
+   */
+  const grass: Grass = buildGrass(quality, grassDensity);
   scene.add(grass.group);
 
   const bunting: Bunting = buildBunting();

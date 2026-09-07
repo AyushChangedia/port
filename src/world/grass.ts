@@ -22,7 +22,11 @@ export interface Grass {
 }
 
 const BLADE_HEIGHT = 0.55;
-const BLADE_WIDTH = 0.035;
+const BLADE_WIDTH = 0.028;
+/** How far the tip leans from the root. Straight blades read as spikes. */
+const BLADE_CURVE = 0.16;
+/** Blades per tuft. Grass grows in clumps, not on a uniform lattice. */
+const PER_TUFT = 5;
 /** Grid cells per axis. Small enough to cull usefully, few enough to stay cheap. */
 const CELLS = 6;
 
@@ -33,22 +37,25 @@ function rnd(n: number): number {
 }
 
 /**
- * A blade: three quads tapering to a triangular tip. Seven triangles.
+ * A blade: a curved strip tapering to a point.
  *
- * Built leaning very slightly so a field of them never looks like a bed of
- * nails, and with the taper front-loaded so the silhouette reads as a blade
- * rather than as a spike.
+ * The curve is the whole thing. A straight tapered triangle reads as a spike
+ * however many you place — grass only looks like grass once the blades arc
+ * over and catch the light along their length. The taper is front-loaded too,
+ * so a blade stays slim for most of its run instead of being a wedge.
  */
 function bladeGeometry(): THREE.BufferGeometry {
-  const SEGMENTS = 4;
+  const SEGMENTS = 5;
   const positions: number[] = [];
   const indices: number[] = [];
 
   for (let i = 0; i <= SEGMENTS; i += 1) {
     const t = i / SEGMENTS;
-    const y = t * BLADE_HEIGHT;
-    const w = i === SEGMENTS ? 0 : BLADE_WIDTH * (1 - t * 0.75);
-    positions.push(-w, y, 0, w, y, 0);
+    // Arc forward as it rises, losing a little height to the lean.
+    const bend = BLADE_CURVE * t * t;
+    const y = (BLADE_HEIGHT * Math.sin(t * 1.28)) / Math.sin(1.28);
+    const w = i === SEGMENTS ? 0 : BLADE_WIDTH * Math.pow(1 - t, 0.55);
+    positions.push(-w, y, bend, w, y, bend);
   }
   for (let i = 0; i < SEGMENTS; i += 1) {
     const a = i * 2;
@@ -228,36 +235,55 @@ varying float vTint;`,
       '#include <color_fragment>',
       `#include <color_fragment>
 {
-  vec3 root = mix( vec3( 0.369, 0.561, 0.243 ), vec3( 0.576, 0.761, 0.392 ), vTint );
-  diffuseColor.rgb *= mix( root, vec3( 0.765, 0.878, 0.541 ), pow( vAlong, 1.6 ) );
+  // Deep at the root, pale at the tip. The old pair sat too light and the
+  // filmic grade washed the whole meadow out to grey-green.
+  vec3 root = mix( vec3( 0.196, 0.365, 0.129 ), vec3( 0.310, 0.522, 0.204 ), vTint );
+  vec3 tip = mix( vec3( 0.541, 0.729, 0.318 ), vec3( 0.702, 0.839, 0.443 ), vTint );
+  diffuseColor.rgb *= mix( root, tip, pow( vAlong, 1.35 ) );
 }`,
     );
 }
 
-export function buildGrass(quality: 'high' | 'low'): Grass {
+export function buildGrass(quality: 'high' | 'low', density = 140000): Grass {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
 
-  const target = quality === 'high' ? 140000 : 12000;
+  /**
+   * Density is deliberately not tied to the post-processing tier.
+   *
+   * An integrated desktop GPU renders a hundred thousand static blades without
+   * trouble — it is the HDR post chain it cannot carry — so pinning the two
+   * together starved the meadow on exactly the machines that could afford it.
+   */
+  const target = density;
   const normalScratch = new THREE.Vector3();
 
   // ── Placement ──────────────────────────────────────────────────────────────
   const blades: Blade[] = [];
-  const maxAttempts = target * 6;
+  const tuftTarget = Math.ceil(target / PER_TUFT);
+  const maxAttempts = tuftTarget * 8;
   for (let i = 0; i < maxAttempts && blades.length < target; i += 1) {
     const a = rnd(i * 1.37) * Math.PI * 2;
     const r = 13 + Math.sqrt(rnd(i * 2.71)) * (WORLD_RADIUS - 15);
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r;
-    if (rejects(x, z, normalScratch)) continue;
-    blades.push({
-      x,
-      z,
-      scale: 0.7 + rnd(i * 3.3) * 0.7,
-      rotY: rnd(i * 5.1) * Math.PI,
-      tint: rnd(i * 7.7),
-      phase: rnd(i * 9.2) * Math.PI * 2,
-    });
+    const cx = Math.cos(a) * r;
+    const cz = Math.sin(a) * r;
+    // One rejection test per clump, not per blade: it is the same answer for
+    // every blade in a 25cm tuft, and it is the expensive part of placement.
+    if (rejects(cx, cz, normalScratch)) continue;
+
+    for (let k = 0; k < PER_TUFT; k += 1) {
+      const seed = i * 7.13 + k * 1.87;
+      const spread = rnd(seed) * 0.26;
+      const around = rnd(seed * 2.1) * Math.PI * 2;
+      blades.push({
+        x: cx + Math.cos(around) * spread,
+        z: cz + Math.sin(around) * spread,
+        scale: 0.6 + rnd(seed * 3.3) * 0.85,
+        rotY: rnd(seed * 5.1) * Math.PI * 2,
+        tint: rnd(i * 7.7) * 0.6 + rnd(seed * 1.3) * 0.4,
+        phase: rnd(seed * 9.2) * Math.PI * 2,
+      });
+    }
   }
 
   // ── Bucket into a grid so the far half of the meadow can be culled ─────────
@@ -288,7 +314,9 @@ export function buildGrass(quality: 'high' | 'low'): Grass {
       side: THREE.DoubleSide,
       envMapIntensity: 0.4,
     }),
-    { rimColor: 0xd8f0a8, rimStrength: 1.1, cacheKey: 'grass', patch: bladeColour },
+    // Less rim than the props: a blade is nearly edge-on from most angles, so
+    // a strong fresnel turns the whole meadow into pale outlines.
+    { rimColor: 0xcdeb96, rimStrength: 0.55, cacheKey: 'grass', patch: bladeColour },
   );
   disposables.push(bladeMaterial);
 
@@ -306,8 +334,9 @@ export function buildGrass(quality: 'high' | 'low'): Grass {
     for (let i = 0; i < cell.length; i += 1) {
       const b = cell[i];
       dummy.position.set(b.x, terrainHeight(b.x, b.z), b.z);
-      dummy.rotation.set(0, b.rotY, 0);
-      dummy.scale.set(1, b.scale, 1);
+      // Lean each blade differently, or a tuft is one blade cloned five times.
+      dummy.rotation.set((b.tint - 0.5) * 0.34, b.rotY, (b.tint - 0.5) * 0.4);
+      dummy.scale.set(0.85 + b.tint * 0.3, b.scale, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
       tints[i] = b.tint;
