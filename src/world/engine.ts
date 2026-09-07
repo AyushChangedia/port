@@ -76,6 +76,9 @@ export function createEngine(
    * This scene is fill-rate bound, so the honest lever on a struggling GPU is
    * pixels, not geometry — dropping the buffer resolution keeps the world
    * intact and the frame rate usable. Scales back up when there is headroom.
+   *
+   * The floor is 75%, not 55%: below about three quarters the drop is itself
+   * plainly visible as blur, which trades one complaint for another.
    */
   let renderScale = 1;
   let slowFrames = 0;
@@ -353,8 +356,10 @@ export function createEngine(
    * target set — and eased, so walking past a pillar does not snap the focus.
    */
   const CENTRE = new THREE.Vector2(0, 0);
-  const FOCUS_NEAR = 10;
-  const FOCUS_FAR = 45;
+  const FOCUS_NEAR = 12;
+  const FOCUS_FAR = 40;
+  /** Where to focus when nothing is ahead — mid-world, not the far plane. */
+  const FOCUS_REST = 25;
   let focus = 18;
   let focusTarget = 18;
   let focusTick = 0;
@@ -364,9 +369,12 @@ export function createEngine(
     if (focusTick % 4 === 0) {
       raycaster.setFromCamera(CENTRE, camera);
       const hit = raycaster.intersectObjects(world.targets, false)[0];
+      // Missing means open ground or sky ahead. Resting at mid-world keeps the
+      // near field sharp; snapping to the far plane threw everything within
+      // ~17m out of focus, signs included.
       focusTarget = hit
         ? THREE.MathUtils.clamp(hit.distance, FOCUS_NEAR, FOCUS_FAR)
-        : FOCUS_FAR;
+        : FOCUS_REST;
     }
     // Reduced motion gets no focus pull at all — it is a slow easing camera
     // move, which is exactly what that preference asks us not to do.
@@ -389,15 +397,15 @@ export function createEngine(
     // two seconds, take some back. The clamp stops it oscillating.
     if (!paused) {
       if (dt > 0.033) { slowFrames += 1; fastFrames = 0; } else if (dt < 0.019) { fastFrames += 1; slowFrames = 0; }
-      if (slowFrames > 30 && renderScale > 0.55) {
-        renderScale = Math.max(0.55, renderScale - 0.15);
+      if (slowFrames > 90 && renderScale > 0.75) {
+        renderScale = Math.max(0.75, renderScale - 0.08);
         slowFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
         // The composer's targets are sized from the drawing buffer, so they
         // have to be rebuilt or the effects resolve at the old resolution.
         post.resize();
-      } else if (fastFrames > 120 && renderScale < 1) {
-        renderScale = Math.min(1, renderScale + 0.15);
+      } else if (fastFrames > 400 && renderScale < 1) {
+        renderScale = Math.min(1, renderScale + 0.08);
         fastFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
         post.resize();

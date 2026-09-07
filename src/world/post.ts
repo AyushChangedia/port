@@ -137,13 +137,14 @@ export function createPost(
     });
 
     dof = new DepthOfFieldEffect(camera, {
-      focusDistance: 20,
-      // World metres, not the old normalised units, and deliberately wide: this
-      // should read as distance softness. A tight range puts the ground at your
-      // feet and the structure in front of you both out of focus at once, which
-      // reads as a broken lens rather than as depth.
-      focusRange: 28,
-      bokehScale: 1.5,
+      focusDistance: 25,
+      // World metres, not the old normalised units, and deliberately very wide.
+      // The walkable world is only 46m across and the signs are wayfinding, so
+      // everything inside it has to stay legible: the range is set so only the
+      // decorative skyline beyond the boundary softens. Anything tighter blurs
+      // the signs you navigate by, which costs legibility to buy an effect.
+      focusRange: 55,
+      bokehScale: 0.7,
       resolutionScale: 0.5,
     });
 
