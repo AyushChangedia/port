@@ -302,6 +302,9 @@ export function buildGrass(quality: 'high' | 'low'): Grass {
       roughness: 0.85,
       metalness: 0,
       side: THREE.DoubleSide,
+      // See bunting.ts: instanceColor only reaches the fragment stage under
+      // USE_COLOR, which needs a real `color` attribute to exist.
+      vertexColors: true,
     }),
     {
       rimColor: 0xffd9f0,
@@ -338,6 +341,7 @@ varying float vTint;`,
     cross.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     cross.setIndex(indices);
     cross.computeVertexNormals();
+    cross.setAttribute('color', new THREE.Float32BufferAttribute(new Array(8 * 3).fill(1), 3));
   }
   disposables.push(cross);
 

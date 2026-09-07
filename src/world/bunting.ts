@@ -118,12 +118,18 @@ export function buildBunting(): Bunting {
   ));
   geometry.setIndex([0, 1, 2]);
   geometry.computeVertexNormals();
+  // White per-vertex colour so vColor = 1 * instanceColor. Without a real
+  // attribute here, USE_COLOR reads a missing one and WebGL hands back black.
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute([1, 1, 1, 1, 1, 1, 1, 1, 1], 3));
 
   const material = applySkyShading(
     new THREE.MeshStandardMaterial({
       roughness: 0.85,
       metalness: 0,
       side: THREE.DoubleSide,
+      // Needed for instanceColor to survive into the fragment stage; see the
+      // white `color` attribute set on the geometry below.
+      vertexColors: true,
     }),
     {
       rimColor: 0xffe0b8,

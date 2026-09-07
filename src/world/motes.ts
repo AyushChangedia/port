@@ -117,7 +117,9 @@ export function buildMotes(quality: 'high' | 'low'): Motes {
   return {
     points,
     dispose() {
-      base.dispose();
+      // Only the instanced geometry: it borrows `base`'s position/uv buffers
+      // rather than copying them, so disposing both would delete the same GL
+      // buffers twice.
       geometry.dispose();
       material.dispose();
     },
