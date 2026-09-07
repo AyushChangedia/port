@@ -5,6 +5,7 @@ import { buildWorld, type BuiltWorld } from './build';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
 import { createPost, type Post } from './post';
+import { buildTerrain, raycastTerrain, terrainHeight, type Terrain } from './terrain';
 import { skyUniforms } from './shaders/skyCommon';
 import { makeSky } from './sky';
 
@@ -164,6 +165,10 @@ export function createEngine(
   }
 
   const materials = createMaterials(quality);
+
+  const terrain: Terrain = buildTerrain(quality);
+  scene.add(terrain.group);
+
   const world: BuiltWorld = buildWorld(quality, materials);
   scene.add(world.root);
 
@@ -271,7 +276,16 @@ export function createEngine(
     // Nothing was hit — walk to the spot on the ground instead. Structures
     // have gaps you can see straight through (the arches especially), so a
     // click that misses must still do the obvious thing rather than nothing.
-    if (raycaster.ray.intersectPlane(groundPlane, groundHit)) {
+    //
+    // Marched against the height function rather than raycast against the
+    // terrain mesh: the mesh is a couple of hundred thousand triangles and
+    // three would test all of them. The flat plane is still the fallback for
+    // a ray that clears the ground entirely.
+    const onGround =
+      raycastTerrain(raycaster.ray.origin, raycaster.ray.direction, groundHit) ||
+      raycaster.ray.intersectPlane(groundPlane, groundHit) !== null;
+
+    if (onGround) {
       const reach = Math.hypot(groundHit.x, groundHit.z);
       if (reach < WORLD_RADIUS - 2) {
         autoTarget = { id: null, x: groundHit.x, z: groundHit.z, reach: 0.8 };
@@ -447,7 +461,14 @@ export function createEngine(
       }
 
       if (wish.lengthSq() > 0) {
-        wish.normalize().multiplyScalar(keys.has('shift') ? SPEED * 1.75 : SPEED);
+        wish.normalize();
+        // Hills cost you. Sample the ground a stride ahead and scale speed by
+        // the gradient, so climbing has weight and descending does not.
+        const PROBE = 0.9;
+        const ahead = terrainHeight(pos.x + wish.x * PROBE, pos.z + wish.z * PROBE);
+        const gradient = (ahead - terrainHeight(pos.x, pos.z)) / PROBE;
+        const slope = THREE.MathUtils.clamp(1 - gradient * 1.1, 0.45, 1);
+        wish.multiplyScalar((keys.has('shift') ? SPEED * 1.75 : SPEED) * slope);
         if (!moved) {
           moved = true;
           callbacks.onFirstMove();
@@ -478,7 +499,7 @@ export function createEngine(
     const bob = reducedMotion
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
-    camera.position.set(pos.x, EYE + height + bob, pos.z);
+    camera.position.set(pos.x, terrainHeight(pos.x, pos.z) + EYE + height + bob, pos.z);
     sky.update(pos.x, pos.z);
     aimSun(pos.x, pos.z);
     scenery.update(clock.elapsedTime);
@@ -528,6 +549,7 @@ export function createEngine(
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
+      terrain.dispose();
       world.dispose();
       scenery.dispose();
       materials.dispose();

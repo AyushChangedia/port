@@ -20,7 +20,6 @@ export interface Materials {
   glass: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
   /** Cheaper glass for the hundreds of distant towers. */
   glassFar: THREE.MeshStandardMaterial;
-  ground: THREE.MeshStandardMaterial;
   foliage: THREE.MeshStandardMaterial;
   dispose(): void;
 }
@@ -113,17 +112,6 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     { rimColor: 0xdcf2ff, rimStrength: 1.4 },
   );
 
-  // Becomes vertex-coloured terrain in phase 2.
-  const ground = applySkyShading(
-    new THREE.MeshStandardMaterial({
-      color: 0x7fa05a,
-      roughness: 0.95,
-      metalness: 0,
-      envMapIntensity: 0.4,
-    }),
-    { rimStrength: 0.5 },
-  );
-
   const foliage = applySkyShading(
     new THREE.MeshStandardMaterial({
       color: 0x6e9b4e,
@@ -134,7 +122,7 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     { rimColor: 0xd8f0a8, rimStrength: 1.2 },
   );
 
-  const all = [stone, stoneLight, accent, metal, glass, glassFar, ground, foliage];
+  const all = [stone, stoneLight, accent, metal, glass, glassFar, foliage];
 
   return {
     stone,
@@ -143,7 +131,6 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     metal,
     glass,
     glassFar,
-    ground,
     foliage,
     dispose() {
       for (const m of all) m.dispose();

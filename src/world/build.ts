@@ -3,6 +3,7 @@ import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
 import { places, WORLD_RADIUS, type Place } from '../data/world';
 import { makeSign } from './labels';
 import type { Materials } from './materials';
+import { terrainHeight } from './terrain';
 
 /**
  * Builds the world.
@@ -78,15 +79,12 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   };
 
   // ── Ground ───────────────────────────────────────────────────────────────
-  const groundGeo = track(new THREE.CircleGeometry(WORLD_RADIUS, 64));
-  const ground = new THREE.Mesh(groundGeo, materials.ground);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  root.add(ground);
+  // The ground itself is terrain.ts now. What is left here is what sits on it.
 
   // The plaza is polished: a real mirror where the device can afford one, and
   // a glossy floor where it cannot. It is what makes the monument feel like it
-  // is standing on something.
+  // is standing on something. The plaza is flattened to y=0 by the terrain's
+  // mask, so a flat disc is still correct here.
   const plazaGeo = track(new THREE.CircleGeometry(11.5, 64));
   if (quality === 'high') {
     const mirror = new Reflector(plazaGeo, {
@@ -111,30 +109,92 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   }
 
 
-  // A low wall so the edge of the world reads as deliberate.
-  const rimGeo = track(new THREE.TorusGeometry(WORLD_RADIUS, 0.22, 6, quality === 'high' ? 96 : 48));
+  // A low wall so the edge of the world reads as deliberate. It has to follow
+  // the ground now — a flat torus on rolling terrain buries itself on the rises
+  // and floats over the dips — so it is a tube swept along the boundary.
+  const rimPoints: THREE.Vector3[] = [];
+  const rimSegments = quality === 'high' ? 128 : 64;
+  for (let i = 0; i < rimSegments; i += 1) {
+    const a = (i / rimSegments) * Math.PI * 2;
+    const x = Math.cos(a) * WORLD_RADIUS;
+    const z = Math.sin(a) * WORLD_RADIUS;
+    rimPoints.push(new THREE.Vector3(x, terrainHeight(x, z) + 0.22, z));
+  }
+  const rimCurve = new THREE.CatmullRomCurve3(rimPoints, true, 'catmullrom', 0.4);
+  const rimGeo = track(new THREE.TubeGeometry(rimCurve, rimSegments * 2, 0.22, 6, true));
   const rim = new THREE.Mesh(rimGeo, metal);
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.22;
+  rim.castShadow = quality === 'high';
   root.add(rim);
 
   // Paths from the plaza to each structure. Wayfinding first — an empty
   // ground plane gives you no reason to pick one direction over another.
-  const pathMat = track(new THREE.MeshBasicMaterial({ color: 0xc9c3b5, transparent: true, opacity: 0.85 }));
-  const pathGeo = track(new THREE.PlaneGeometry(1, 1));
+  //
+  // Each one is a ribbon built directly in world space and dropped onto the
+  // ground, rather than a single quad: over hills a flat quad either sinks into
+  // the rise or hangs in the air over the dip.
+  const pathMat = track(new THREE.MeshBasicMaterial({
+    color: 0xd8cdae, transparent: true, opacity: 0.75, depthWrite: false,
+  }));
+  const PATH_ALONG = 28;
+  const PATH_HALF = 1.5;
+
   for (const place of places) {
     if (place.id === 'origin') continue;
     const len = Math.hypot(place.at[0], place.at[1]);
-    const path = new THREE.Mesh(pathGeo, pathMat);
-    path.rotation.x = -Math.PI / 2;
-    path.rotation.z = -Math.atan2(place.at[0], place.at[1]);
-    path.scale.set(1.5, len, 1);
-    path.position.set(place.at[0] / 2, 0.015, place.at[1] / 2);
-    root.add(path);
+    const dx = place.at[0] / len;
+    const dz = place.at[1] / len;
+    // Perpendicular, to give the ribbon its width.
+    const nx = -dz;
+    const nz = dx;
+
+    const vertices = new Float32Array((PATH_ALONG + 1) * 2 * 3);
+    const indices: number[] = [];
+    for (let i = 0; i <= PATH_ALONG; i += 1) {
+      const t = (i / PATH_ALONG) * len;
+      for (let j = 0; j < 2; j += 1) {
+        const s = j === 0 ? -PATH_HALF : PATH_HALF;
+        const x = dx * t + nx * s;
+        const z = dz * t + nz * s;
+        const v = (i * 2 + j) * 3;
+        vertices[v] = x;
+        vertices[v + 1] = terrainHeight(x, z) + 0.04;
+        vertices[v + 2] = z;
+      }
+      if (i < PATH_ALONG) {
+        const a = i * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+
+    const geo = track(new THREE.BufferGeometry());
+    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    root.add(new THREE.Mesh(geo, pathMat));
   }
 
   // ── Structures ───────────────────────────────────────────────────────────
-  const ringGeo = track(new THREE.RingGeometry(0.92, 1, 48));
+  /**
+   * Approach rings, built per place so each can be dropped onto the ground.
+   *
+   * The pads are level out to `solid + 2.5`m and every reach sits within that,
+   * so in practice these are flat today — but they are displaced anyway, so
+   * tuning a reach later cannot quietly bury one in a hillside.
+   */
+  const makeRing = (place: Place): THREE.BufferGeometry => {
+    const geo = new THREE.RingGeometry(place.reach * 0.92, place.reach, 64);
+    geo.rotateX(-Math.PI / 2);
+    const position = geo.attributes.position;
+    for (let i = 0; i < position.count; i += 1) {
+      const x = place.at[0] + position.getX(i);
+      const z = place.at[1] + position.getZ(i);
+      position.setY(i, terrainHeight(x, z) + 0.02);
+    }
+    position.needsUpdate = true;
+    geo.computeVertexNormals();
+    return track(geo);
+  };
+
   const markerMat = () =>
     track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
 
@@ -146,10 +206,7 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
     const height = buildStructure(place, group, { slab, post, stone, stoneLight, accent, glass, metal });
 
     // Ground ring marking where the structure opens.
-    const ring = new THREE.Mesh(ringGeo, markerMat());
-    ring.scale.setScalar(place.reach);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.02;
+    const ring = new THREE.Mesh(makeRing(place), markerMat());
     group.add(ring);
     markers.set(place.id, ring);
 
