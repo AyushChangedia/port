@@ -67,18 +67,9 @@ export default function App() {
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
 
-    // If the GPU drops the context the canvas goes black and stays black, so
-    // fall back to the page rather than leaving the visitor staring at nothing.
-    const onContextLost = () => {
-      setForcedRead(true);
-      setMode('reading');
-    };
-    canvas.addEventListener('webglcontextlost', onContextLost);
-
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('orientationchange', onResize);
-      canvas.removeEventListener('webglcontextlost', onContextLost);
       engine.dispose();
       engineRef.current = null;
     };

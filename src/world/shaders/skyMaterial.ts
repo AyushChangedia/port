@@ -24,17 +24,6 @@ export interface SkyShadingOptions {
   rimColor?: THREE.ColorRepresentation;
   rimPower?: number;
   rimStrength?: number;
-  /**
-   * Further patching, applied after the sky shading. Grass, flowers and bunting
-   * use it to add wind in the vertex stage while keeping the rim, the wrapped
-   * diffuse and the aerial perspective they share with everything else.
-   */
-  patch?: (shader: THREE.WebGLProgramParametersWithUniforms) => void;
-  /**
-   * Distinguishes the program when `patch` changes the code. Materials patched
-   * differently must not share a compiled program.
-   */
-  cacheKey?: string;
 }
 
 const DEFAULTS = {
@@ -148,15 +137,11 @@ ${SKY_CHUNK}`,
 	gl_FragColor.rgb = mix( gl_FragColor.rgb, skyHaze, clamp( skyFogAmount, 0.0, 1.0 ) );
 }`,
       );
-
-    options.patch?.(shader);
   };
 
   // Patched materials produce different code from stock ones, and three's
-  // default cache key cannot see that. Materials sharing a variant share a
-  // program; a different `patch` must declare a different key.
-  const key = `sky-shading-v1${options.cacheKey ? `:${options.cacheKey}` : ''}`;
-  material.customProgramCacheKey = () => key;
+  // default cache key cannot see that. All patched materials share one program.
+  material.customProgramCacheKey = () => 'sky-shading-v1';
   material.needsUpdate = true;
   return material;
 }
