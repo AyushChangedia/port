@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { places, WORLD_RADIUS } from '../data/world';
-import { buildWorld, type BuiltWorld } from './build';
+import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
+import { buildBunting, type Bunting } from './bunting';
+import { buildGrass, type Grass } from './grass';
+import { buildMotes, type Motes } from './motes';
+import { buildWater, type Water } from './water';
+import { windUniforms } from './shaders/wind';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
 import { createPost, type Post } from './post';
@@ -70,7 +75,23 @@ export function createEngine(
     return null;
   }
 
-  const maxDpr = Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.5);
+  /**
+   * Budget the drawing buffer by total pixels, not by device pixel ratio.
+   *
+   * The post chain allocates several full-size half-float targets, and on a
+   * wide window at DPR 2 that plus the shadow map is enough to exhaust GPU
+   * memory and lose the context outright — a black canvas with no error. A
+   * ratio cap alone does not bound this, because the cost scales with window
+   * area as well; a pixel budget does. 4.2M is a little over 1440p, which is
+   * the target this is tuned for.
+   */
+  const PIXEL_BUDGET = quality === 'high' ? 4.2e6 : 1.8e6;
+  const cssPixels = Math.max(1, window.innerWidth * window.innerHeight);
+  const maxDpr = Math.min(
+    window.devicePixelRatio || 1,
+    quality === 'high' ? 2 : 1.5,
+    Math.sqrt(PIXEL_BUDGET / cssPixels),
+  );
   /**
    * Adaptive resolution.
    *
@@ -132,6 +153,9 @@ export function createEngine(
   if (quality === 'high') {
     sun.castShadow = true;
     sun.shadow.mapSize.set(SHADOW_MAP, SHADOW_MAP);
+    // Depth only: the default also allocates colour, which is wasted here and
+    // counts against the same GPU memory budget as the post chain.
+    sun.shadow.autoUpdate = true;
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = SUN_DISTANCE * 2.4;
     sun.shadow.camera.left = -SHADOW_BOX;
@@ -174,6 +198,36 @@ export function createEngine(
 
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
+
+  /**
+   * TEMPORARY — bisecting a black screen that only appears on real GPUs.
+   *
+   * The phase 3 layers can be switched off individually from the URL, e.g.
+   * `?off=grass` or `?off=motes,water`, so the fault can be located on a
+   * machine this session cannot otherwise reach. Remove once it is found.
+   */
+  const off = new Set(
+    (new URLSearchParams(window.location.search).get('off') ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
+
+  const grass: Grass | null = off.has('grass') ? null : buildGrass(quality);
+  if (grass) scene.add(grass.group);
+
+  const bunting: Bunting | null = off.has('bunting') ? null : buildBunting();
+  if (bunting) scene.add(bunting.group);
+
+  const motes: Motes | null = off.has('motes') ? null : buildMotes(quality);
+  if (motes) scene.add(motes.points);
+
+  const water: Water | null = off.has('water') ? null : buildWater(PLAZA_RADIUS);
+  if (water) scene.add(water.mesh);
+
+  // Reduced motion stops the weather dead: no sway, no flutter, no drift. The
+  // clock is frozen rather than merely scaled, so nothing creeps.
+  windUniforms.uWind.value = reducedMotion ? 0 : 1;
 
   const post: Post = createPost(renderer, scene, camera, sky.sunMesh, quality, EXPOSURE);
 
@@ -293,6 +347,18 @@ export function createEngine(
     }
   };
 
+  /**
+   * A lost context is unrecoverable here and leaves a black canvas. Stop the
+   * loop; App listens for the same event and falls back to the readable page,
+   * so the visitor always has the content.
+   */
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
+    contextLost = true;
+    cancelAnimationFrame(raf);
+  };
+  canvas.addEventListener('webglcontextlost', onContextLost);
+
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
@@ -398,12 +464,15 @@ export function createEngine(
 
   // ── Frame loop ───────────────────────────────────────────────────────────
   const clock = new THREE.Clock();
+  /** Set when the GPU drops the context; the loop must not keep running. */
+  let contextLost = false;
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
   const wish = new THREE.Vector3();
   let raf = 0;
 
   function frame(): void {
+    if (contextLost) return;
     raf = requestAnimationFrame(frame);
     const dt = Math.min(0.05, clock.getDelta());
 
@@ -509,6 +578,11 @@ export function createEngine(
 
     // One write per frame reaches the sky dome and every patched material.
     skyUniforms.uTime.value = clock.elapsedTime;
+    // And one more reaches the grass, the flowers and the bunting together, so
+    // a gust crosses all three at once.
+    windUniforms.uWindTime.value = reducedMotion ? 0 : clock.elapsedTime;
+    windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
+    water?.update(reducedMotion ? 0 : clock.elapsedTime);
     camera.updateMatrixWorld();
     skyUniforms.uSunDirView.value
       .copy(skyUniforms.uSunDir.value)
@@ -544,11 +618,16 @@ export function createEngine(
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clearKeys);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
+      water?.dispose();
+      motes?.dispose();
+      bunting?.dispose();
+      grass?.dispose();
       terrain.dispose();
       world.dispose();
       scenery.dispose();
