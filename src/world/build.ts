@@ -4,6 +4,7 @@ import { places, WORLD_RADIUS, type Place } from '../data/world';
 import { makeSign } from './labels';
 import type { Materials } from './materials';
 import { POOL_CENTRE, POOL_RADIUS, POOL_SURFACE, terrainHeight } from './terrain';
+import { disposeStonework, glyphTexture, roundedBox } from './stonework';
 
 /**
  * Builds the world.
@@ -41,10 +42,17 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
 
   // Materials are shared with the scenery layer and disposed by their owner.
   const { stone, stoneLight, accent, glass, metal } = materials;
-  const box = track(new THREE.BoxGeometry(1, 1, 1));
   const cylinder = track(new THREE.CylinderGeometry(0.5, 0.5, 1, quality === 'high' ? 20 : 10));
+  disposables.push({ dispose: disposeStonework });
 
-  /** A box placed by its footprint centre, sitting on the ground. */
+  /**
+   * A block placed by its footprint centre, sitting on the ground.
+   *
+   * Chamfered rather than a scaled unit cube: a hard 90-degree corner is the
+   * most obviously computer-generated thing in a scene made of boxes, and one
+   * caught highlight along an edge does more for the stone than any amount of
+   * shading.
+   */
   const slab = (
     parent: THREE.Object3D,
     w: number,
@@ -55,8 +63,7 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
     z: number,
     material: THREE.Material = stone,
   ) => {
-    const mesh = new THREE.Mesh(box, material);
-    mesh.scale.set(w, h, d);
+    const mesh = new THREE.Mesh(roundedBox(w, h, d), material);
     mesh.position.set(x, y + h / 2, z);
     mesh.castShadow = quality === 'high';
     mesh.receiveShadow = true;
@@ -203,12 +210,64 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   const markerMat = () =>
     track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
 
+  let glyphIndex = 0;
   for (const place of places) {
     const group = new THREE.Group();
     group.position.set(place.at[0], 0, place.at[1]);
     root.add(group);
 
     const height = buildStructure(place, group, { slab, post, stone, stoneLight, accent, glass, metal });
+
+    /**
+     * A carved glyph on the face that greets you.
+     *
+     * Emissive and unlit, so it holds its colour in shadow and reads as
+     * something cut into the stone and lit from within rather than painted on.
+     * One motif per place: somewhere becomes identifiable by its symbol as
+     * well as by its sign.
+     */
+    const glyphMap = glyphTexture(glyphIndex);
+    const glyphMat = track(new THREE.MeshBasicMaterial({
+      map: glyphMap,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      toneMapped: false,
+      color: 0x6fc4e8,
+    }));
+    disposables.push({ dispose: () => glyphMap.dispose() });
+    const glyphSize = Math.min(2.1, place.solid * 0.72);
+    const glyph = new THREE.Mesh(track(new THREE.PlaneGeometry(glyphSize, glyphSize)), glyphMat);
+    // Face the plaza, standing just clear of the structure's own surface.
+    const facing = Math.atan2(-place.at[0], -place.at[1]);
+    glyph.position.set(
+      Math.sin(facing) * (place.solid + 0.06),
+      Math.min(2.6, height * 0.55),
+      Math.cos(facing) * (place.solid + 0.06),
+    );
+    glyph.rotation.y = facing;
+    glyph.renderOrder = 4;
+    group.add(glyph);
+    glyphIndex += 1;
+
+    /**
+     * Erosion at the footing.
+     *
+     * Nothing in the references meets the ground along a ruled line. A few
+     * small tumbled blocks around each base break that line, and they are the
+     * cheapest possible way to do it.
+     */
+    for (let e = 0; e < 5; e += 1) {
+      const a = (e / 5) * Math.PI * 2 + place.solid;
+      const spread = place.solid * (0.85 + ((e * 37) % 11) / 40);
+      const size = 0.26 + ((e * 53) % 13) / 42;
+      const rubble = new THREE.Mesh(roundedBox(size, size * 0.62, size * 0.86, 0.05), stoneLight);
+      rubble.position.set(Math.sin(a) * spread, size * 0.28, Math.cos(a) * spread);
+      rubble.rotation.set(((e * 17) % 7) / 12, a * 1.7, ((e * 29) % 5) / 14);
+      rubble.castShadow = quality === 'high';
+      rubble.receiveShadow = true;
+      group.add(rubble);
+    }
 
     // Ground ring marking where the structure opens.
     const ring = new THREE.Mesh(makeRing(place), markerMat());

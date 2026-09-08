@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { applySkyShading } from './shaders/skyMaterial';
+import { stoneDetail } from './stonework';
 
 /**
  * The material set.
@@ -40,6 +41,7 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
       metalness: 0,
       envMapIntensity: 0.5,
     }),
+    { cacheKey: 'stone-detail', patch: stoneDetail },
   );
 
   // The pale counterpart: pillars, caps, plinths. Cool, so it reads as stone
@@ -51,6 +53,7 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
       metalness: 0,
       envMapIntensity: 0.7,
     }),
+    { cacheKey: 'stone-detail', patch: stoneDetail },
   );
 
   // The one hot colour in the palette. A little emissive so it still reads at

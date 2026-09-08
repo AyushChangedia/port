@@ -63,11 +63,13 @@ export function buildBeacons(): Beacons {
         // light rather than a solid rod.
         float edge = 1.0 - abs( dot( normalize( vToEye ), vec3( 0.0, 1.0, 0.0 ) ) );
         float pulse = 0.96 + sin( uTime * 1.9 ) * 0.04;
-        float a = fade * 0.16 * pulse * ( 0.35 + edge * 0.65 );
+        float a = fade * 0.055 * pulse * ( 0.3 + edge * 0.7 );
         if ( a < 0.003 ) discard;
-        // Faint but genuinely bright, so bloom picks it up and the glow comes
-        // from the bloom rather than from the geometry being opaque.
-        gl_FragColor = vec4( uColor * 3.2, a );
+        // Additive blending adds colour * alpha to whatever is behind. At
+        // 3.2 brightness and 0.16 alpha that was adding half of full white to
+        // every structure standing behind a column, which is what washed the
+        // architecture out to near-white ghosts.
+        gl_FragColor = vec4( uColor * 1.5, a );
       }
     `,
   });
