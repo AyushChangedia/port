@@ -4,6 +4,8 @@ import { places, WORLD_RADIUS } from '../data/world';
 import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
 import { buildBeacons, type Beacons } from './beacons';
 import { buildBunting, type Bunting } from './bunting';
+import { buildCape, type Cape } from './cape';
+import { buildCharacter, type Character } from './character';
 import { buildGrass, type Grass } from './grass';
 import { buildMotes, type Motes } from './motes';
 import { buildWater, type Water } from './water';
@@ -45,7 +47,11 @@ export interface Engine {
   dispose(): void;
 }
 
-const EYE = 1.68;
+/** Where the camera sits relative to the traveller, before yaw and pitch. */
+const CAM_BACK = 4.4;
+const CAM_UP = 2.05;
+/** What it looks at: chest height, not the feet. */
+const LOOK_UP = 1.35;
 const SPEED = 9.5;
 const ACCEL = 9;
 const PLAYER_R = 0.6;
@@ -226,6 +232,12 @@ export function createEngine(
   const motes: Motes = buildMotes(quality);
   scene.add(motes.points);
 
+  const character: Character = buildCharacter(reducedMotion);
+  scene.add(character.group);
+
+  const cape: Cape = buildCape(reducedMotion);
+  scene.add(cape.mesh);
+
   const water: Water = buildWater(PLAZA_RADIUS, POOL_CENTRE);
   water.mesh.position.set(POOL_CENTRE[0], POOL_SURFACE, POOL_CENTRE[1]);
   scene.add(water.mesh);
@@ -240,7 +252,15 @@ export function createEngine(
   const pos = new THREE.Vector3(0, 0, 19);
   const vel = new THREE.Vector3();
   let yaw = Math.PI;      // facing the arrival monument
-  let pitch = window.innerWidth / window.innerHeight < 0.85 ? 0.12 : 0.015;
+  let pitch = 0.16;
+  /**
+   * Which way the traveller faces, damped toward the direction of travel.
+   *
+   * Deliberately separate from the camera's yaw: movement stays camera-
+   * relative, but the figure turns to face where it is going, and `onPose`
+   * reports *this* — the minimap tracks the traveller, not the lens.
+   */
+  let charYaw = Math.PI;
   let paused = false;
   let moved = false;
   /** Vertical velocity while jumping; 0 when standing. */
@@ -305,7 +325,7 @@ export function createEngine(
     dragDist += Math.abs(dx) + Math.abs(dy);
 
     yaw -= dx * 0.0042;
-    pitch = THREE.MathUtils.clamp(pitch - dy * 0.0032, -0.55, 0.42);
+    pitch = THREE.MathUtils.clamp(pitch - dy * 0.0032, -0.35, 0.9);
     if (dragDist > 12) autoTarget = null;
   };
 
@@ -385,6 +405,7 @@ export function createEngine(
     pos.set(place.at[0] + Math.sin(angle) * stand, 0, place.at[1] + Math.cos(angle) * stand);
     vel.set(0, 0, 0);
     yaw = Math.atan2(place.at[0] - pos.x, place.at[1] - pos.z);
+    charYaw = yaw;
     autoTarget = null;
   }
 
@@ -469,6 +490,9 @@ export function createEngine(
 
   // ── Frame loop ───────────────────────────────────────────────────────────
   const clock = new THREE.Clock();
+  const wantCam = new THREE.Vector3();
+  const camPos = new THREE.Vector3(0, 4, 24);
+  const lookAt = new THREE.Vector3();
   /** Set when the GPU drops the context; the loop must not keep running. */
   let contextLost = false;
   const forward = new THREE.Vector3();
@@ -573,13 +597,50 @@ export function createEngine(
     const bob = reducedMotion
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
-    camera.position.set(pos.x, terrainHeight(pos.x, pos.z) + EYE + height + bob, pos.z);
+    // ── The traveller ──────────────────────────────────────────────────────
+    const foot = terrainHeight(pos.x, pos.z);
+    const groundSpeed = Math.hypot(vel.x, vel.z);
+
+    // Turn toward travel, by the shortest way round.
+    if (groundSpeed > 0.4) {
+      const want = Math.atan2(vel.x, vel.z);
+      let delta = want - charYaw;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      charYaw += THREE.MathUtils.clamp(delta, -8 * dt, 8 * dt);
+    }
+
+    character.group.position.set(pos.x, foot + height, pos.z);
+    character.group.rotation.y = charYaw;
+    character.update(dt, groundSpeed, height > 0.02, clock.elapsedTime);
+    cape.update(dt, character.shoulders, vel, clock.elapsedTime);
+
+    // ── Camera ─────────────────────────────────────────────────────────────
+    const focusY = foot + height + LOOK_UP;
+    const cosPitch = Math.cos(pitch);
+    wantCam.set(
+      pos.x - Math.sin(yaw) * CAM_BACK * cosPitch,
+      focusY + CAM_UP * 0.5 + Math.sin(pitch) * CAM_BACK,
+      pos.z - Math.cos(yaw) * CAM_BACK * cosPitch,
+    );
+    // Never let the camera sink into a hillside.
+    wantCam.y = Math.max(wantCam.y, terrainHeight(wantCam.x, wantCam.z) + 0.45);
+
+    // Critically damped: it must catch up without ever overshooting, or the
+    // whole world appears to wobble every time you stop.
+    const follow = reducedMotion ? 1 : 1 - Math.exp(-11 * dt);
+    camPos.lerp(wantCam, follow);
+    camera.position.copy(camPos);
+    lookAt.set(pos.x, focusY + bob, pos.z);
+    camera.lookAt(lookAt);
+
+    // Fade the traveller out rather than clipping through them up close.
+    const near = camera.position.distanceTo(lookAt);
+    character.setOpacity(THREE.MathUtils.clamp((near - 1.0) / 0.8, 0.25, 1));
+
     sky.update(pos.x, pos.z);
     aimSun(pos.x, pos.z);
     scenery.update(clock.elapsedTime);
-    camera.rotation.set(0, 0, 0, 'YXZ');
-    camera.rotateY(yaw + Math.PI);
-    camera.rotateX(pitch);
 
     // One write per frame reaches the sky dome and every patched material.
     skyUniforms.uTime.value = clock.elapsedTime;
@@ -596,7 +657,8 @@ export function createEngine(
 
     updateFocus(dt);
 
-    callbacks.onPose(pos.x, pos.z, yaw);
+    // The traveller's facing, not the camera's — the minimap tracks them.
+    callbacks.onPose(pos.x, pos.z, charYaw);
     post.render(dt);
   }
 
@@ -631,6 +693,8 @@ export function createEngine(
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
       water.dispose();
+      cape.dispose();
+      character.dispose();
       beacons.dispose();
       motes.dispose();
       bunting.dispose();
