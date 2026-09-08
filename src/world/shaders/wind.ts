@@ -31,57 +31,24 @@ uniform float uWind;
 uniform vec3 uPlayer;
 
 /**
- * Value noise, written narrow on purpose.
+ * Gust strength at a world position, in roughly -1..1.
  *
- * This runs in the *vertex* stage on hundreds of thousands of blades. The
- * hash below ends in fract(), which only behaves while its input stays small,
- * and an fbm doubles its coordinate every octave — so the domain is wrapped
- * before use and the octave count is kept low. Three is enough for wind.
- */
-float windHash( vec2 p ) {
-  p = fract( p * vec2( 123.34, 456.21 ) );
-  p += dot( p, p + 45.32 );
-  return fract( p.x * p.y );
-}
-
-float windNoise( vec2 p ) {
-  vec2 i = floor( p );
-  vec2 f = fract( p );
-  vec2 u = f * f * ( 3.0 - 2.0 * f );
-  float a = windHash( i );
-  float b = windHash( i + vec2( 1.0, 0.0 ) );
-  float c = windHash( i + vec2( 0.0, 1.0 ) );
-  float d = windHash( i + vec2( 1.0, 1.0 ) );
-  return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
-}
-
-float windFbm( vec2 p ) {
-  // Wrapped, so neither a far-flung world position nor a long-running clock
-  // can push the hash into the range where fract() stops being meaningful.
-  p = mod( p, 256.0 );
-  float value = 0.0;
-  float amplitude = 0.5;
-  for ( int i = 0; i < 3; i ++ ) {
-    value += amplitude * windNoise( p );
-    p = mod( p * 2.03, 256.0 );
-    amplitude *= 0.5;
-  }
-  return value;
-}
-
-/**
- * Gust strength at a world position, in -1..1.
+ * Three travelling waves crossing at different angles, speeds and wavelengths.
+ * Not noise: this runs in the vertex stage on every blade in the meadow, and
+ * the fbm it replaced was both the most expensive thing in the frame and the
+ * one construct that rendered a whole class of GPU black — a fault I could
+ * reproduce by elimination but never explain, on hardware I have no access to.
  *
- * Two layers drifting at different speeds so the field itself travels; a
- * single sine makes the whole meadow breathe in unison, which reads as a
- * shader rather than as wind. The result is clamped: everything downstream
- * displaces geometry, so one bad value must not be able to throw a blade
- * across the world.
+ * The waves are mutually irrational in period, so the field never visibly
+ * repeats, and because it varies with position the meadow ripples in bands
+ * rather than breathing in unison. That is the part that matters; the rest was
+ * expensive detail nobody could see at this scale.
  */
 float windField( vec2 world ) {
   float t = mod( uWindTime, 600.0 );
-  float gust = windFbm( world * 0.06 + vec2( t * 0.12, t * 0.07 ) );
-  gust += windFbm( world * 0.017 - vec2( t * 0.05, t * 0.031 ) ) * 0.6;
-  return clamp( ( gust - 0.55 ) * 2.0, -1.0, 1.0 );
+  float a = sin( world.x * 0.13 + world.y * 0.07 + t * 0.9 );
+  float b = sin( world.x * -0.05 + world.y * 0.19 + t * 0.61 );
+  float c = sin( ( world.x + world.y ) * 0.31 + t * 1.7 );
+  return clamp( a * 0.5 + b * 0.36 + c * 0.18, -1.0, 1.0 );
 }
 `;

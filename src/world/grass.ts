@@ -206,29 +206,11 @@ transformed.y -= press * 0.12 * vAlong;`,
   };
 }
 
-/**
- * Blade colour: darker at the root, pale toward the tip, varied per blade.
- *
- * Supplies its own varyings. The wind patch used to provide them, and with the
- * wind gone the fragment stage would otherwise read varyings the vertex stage
- * never writes.
- */
+/** Blade colour: darker at the root, pale toward the tip, varied per blade. */
 function bladeColour(shader: THREE.WebGLProgramParametersWithUniforms): void {
-  shader.vertexShader = shader.vertexShader
-    .replace(
-      '#include <common>',
-      `#include <common>
-attribute float aTint;
-varying float vAlong;
-varying float vTint;`,
-    )
-    .replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-vAlong = clamp( transformed.y / ${BLADE_HEIGHT.toFixed(3)}, 0.0, 1.0 );
-vTint = aTint;`,
-    );
-
+  // Fragment only. The wind patch runs alongside this one and already declares
+  // aTint, vAlong and vTint in the vertex stage; declaring them here as well is
+  // a redefinition and the vertex shader will not compile.
   shader.fragmentShader = shader.fragmentShader
     .replace(
       '#include <common>',
@@ -301,16 +283,14 @@ export function buildGrass(density = 140000): Grass {
   }
 
   /**
-   * The blades do not take the wind, and that is deliberate.
+   * The blades take the wind again.
    *
-   * Bisected on an Intel UHD 730 through ANGLE/D3D11: the sky shading alone is
-   * fine, adding the wind vertex patch renders the entire frame black, and it
-   * does so with no shader error, no link error and no GL error. The identical
-   * patch on the flowers and the bunting is fine on the same machine, and the
-   * fault does not scale with instance count, so it is not cost. Rather than
-   * ship something that turns a whole class of machine black, the blades stand
-   * still and the flowers and flags carry the wind. Revisit with that hardware
-   * in hand.
+   * They were held back because adding the wind patch rendered the entire
+   * frame black on an Intel UHD 730 through ANGLE/D3D11 — with no shader
+   * error, no link error and no GL error, on hardware this session cannot
+   * reach. The wind field no longer evaluates noise in the vertex stage, which
+   * removes the whole class of construct the fault lived in rather than
+   * gambling on which part of it was to blame.
    */
   const bladeMaterial = applySkyShading(
     new THREE.MeshStandardMaterial({
@@ -321,7 +301,7 @@ export function buildGrass(density = 140000): Grass {
     }),
     // Less rim than the props: a blade is nearly edge-on from most angles, so
     // a strong fresnel turns the whole meadow into pale outlines.
-    { rimColor: 0xcdeb96, rimStrength: 0.55, cacheKey: 'grass', patch: bladeColour },
+    { rimColor: 0xcdeb96, rimStrength: 0.55, ...windPatch(0.32, 'grass', bladeColour) },
   );
   disposables.push(bladeMaterial);
 

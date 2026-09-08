@@ -22,8 +22,9 @@ export interface Cape {
 
 const COLS = 11;
 const ROWS = 14;
-const WIDTH = 0.58;
-const LENGTH = 1.02;
+// A little wider than the shoulders, not double them.
+const WIDTH = 0.42;
+const LENGTH = 0.92;
 const STEP = 1 / 120;
 const MAX_SUBSTEPS = 4;
 const DAMPING = 0.982;
