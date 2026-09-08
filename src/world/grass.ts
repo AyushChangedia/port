@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { places, WORLD_RADIUS } from '../data/world';
+import { places } from '../data/world';
 import { applySkyShading } from './shaders/skyMaterial';
 import { WIND_GLSL, windUniforms } from './shaders/wind';
-import { POOL_CENTRE, POOL_RADIUS, terrainHeight, terrainNormal } from './terrain';
+import { islands, onGround, POOL_CENTRE, POOL_RADIUS, terrainHeight, terrainNormal } from './terrain';
 
 /**
  * The meadow.
@@ -27,8 +27,6 @@ const BLADE_WIDTH = 0.028;
 const BLADE_CURVE = 0.16;
 /** Blades per tuft. Grass grows in clumps, not on a uniform lattice. */
 const PER_TUFT = 5;
-/** Grid cells per axis. Small enough to cull usefully, few enough to stay cheap. */
-const CELLS = 6;
 
 /** Deterministic, so the meadow is the same on every visit. */
 function rnd(n: number): number {
@@ -106,6 +104,7 @@ function flowerTexture(): THREE.CanvasTexture {
 }
 
 interface Blade {
+  island: number;
   x: number;
   z: number;
   scale: number;
@@ -116,9 +115,8 @@ interface Blade {
 
 /** True where nothing should grow: too steep, on a structure, or on a path. */
 function rejects(x: number, z: number, normalScratch: THREE.Vector3): boolean {
-  const radius = Math.hypot(x, z);
-  // The plaza stays clear, and nothing grows past the boundary.
-  if (radius < 11.5 || radius > WORLD_RADIUS - 1.5) return true;
+  // Nothing grows over the drop, and nothing grows right on a cliff edge.
+  if (!onGround(x, z)) return true;
   // Nothing grows in the pool.
   if (Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]) < POOL_RADIUS + 1.2) return true;
 
@@ -250,10 +248,14 @@ export function buildGrass(density = 140000): Grass {
   const tuftTarget = Math.ceil(target / PER_TUFT);
   const maxAttempts = tuftTarget * 8;
   for (let i = 0; i < maxAttempts && blades.length < target; i += 1) {
+    // Sample inside an island rather than across a world that no longer
+    // exists as one piece: scattering over the whole extent would reject the
+    // overwhelming majority of candidates over open air.
+    const isl = islands[i % islands.length];
     const a = rnd(i * 1.37) * Math.PI * 2;
-    const r = 13 + Math.sqrt(rnd(i * 2.71)) * (WORLD_RADIUS - 15);
-    const cx = Math.cos(a) * r;
-    const cz = Math.sin(a) * r;
+    const r = Math.sqrt(rnd(i * 2.71)) * (isl.radius - 0.8);
+    const cx = isl.x + Math.cos(a) * r;
+    const cz = isl.z + Math.sin(a) * r;
     // One rejection test per clump, not per blade: it is the same answer for
     // every blade in a 25cm tuft, and it is the expensive part of placement.
     if (rejects(cx, cz, normalScratch)) continue;
@@ -263,6 +265,7 @@ export function buildGrass(density = 140000): Grass {
       const spread = rnd(seed) * 0.26;
       const around = rnd(seed * 2.1) * Math.PI * 2;
       blades.push({
+        island: i % islands.length,
         x: cx + Math.cos(around) * spread,
         z: cz + Math.sin(around) * spread,
         scale: 0.6 + rnd(seed * 3.3) * 0.85,
@@ -273,14 +276,16 @@ export function buildGrass(density = 140000): Grass {
     }
   }
 
-  // ── Bucket into a grid so the far half of the meadow can be culled ─────────
-  const span = (WORLD_RADIUS * 2) / CELLS;
-  const cells: Blade[][] = Array.from({ length: CELLS * CELLS }, () => []);
-  for (const blade of blades) {
-    const cx = Math.min(CELLS - 1, Math.max(0, Math.floor((blade.x + WORLD_RADIUS) / span)));
-    const cz = Math.min(CELLS - 1, Math.max(0, Math.floor((blade.z + WORLD_RADIUS) / span)));
-    cells[cz * CELLS + cx].push(blade);
-  }
+  /**
+   * One instanced mesh per island.
+   *
+   * The islands are already the natural unit here: each is a tight, isolated
+   * cluster with a small bounding sphere, so culling by island is strictly
+   * better than the arbitrary grid this replaced — and there is no longer a
+   * single world extent to lay a grid over anyway.
+   */
+  const cells: Blade[][] = islands.map(() => []);
+  for (const blade of blades) cells[blade.island].push(blade);
 
   /**
    * The blades take the wind again.
@@ -410,10 +415,11 @@ varying float vTint;`,
 
   let placed = 0;
   for (let i = 0; i < flowerCount * 14 && placed < flowerCount; i += 1) {
+    const isl = islands[i % islands.length];
     const a = rnd(i * 4.19) * Math.PI * 2;
-    const r = 13 + Math.sqrt(rnd(i * 6.53)) * (WORLD_RADIUS - 15);
-    const x = Math.cos(a) * r;
-    const z = Math.sin(a) * r;
+    const r = Math.sqrt(rnd(i * 6.53)) * (isl.radius - 0.8);
+    const x = isl.x + Math.cos(a) * r;
+    const z = isl.z + Math.sin(a) * r;
     if (rejects(x, z, normalScratch)) continue;
     // Meadows are patchy, not uniform: a low-frequency mask makes drifts.
     // Patchy, but only just: a hard mask leaves bare ground where the

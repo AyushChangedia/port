@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { places, WORLD_RADIUS } from '../data/world';
+import { places } from '../data/world';
 import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
 import { buildBeacons, type Beacons } from './beacons';
 import { buildBunting, type Bunting } from './bunting';
 import { buildCape, type Cape } from './cape';
+import { buildCloudSea, type CloudSea } from './cloudsea';
 import { buildCharacter, type Character } from './character';
 import { buildGrass, type Grass } from './grass';
 import { buildMotes, type Motes } from './motes';
@@ -13,7 +14,17 @@ import { windUniforms } from './shaders/wind';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
 import { createPost, type Post } from './post';
-import { buildTerrain, POOL_CENTRE, POOL_SURFACE, raycastTerrain, terrainHeight, type Terrain } from './terrain';
+import {
+  buildTerrain,
+  FALL_LIMIT,
+  nearestIsland,
+  onGround,
+  POOL_CENTRE,
+  POOL_SURFACE,
+  raycastTerrain,
+  terrainHeight,
+  type Terrain,
+} from './terrain';
 import { skyUniforms } from './shaders/skyCommon';
 import { makeSky } from './sky';
 
@@ -56,8 +67,12 @@ const SPEED = 9.5;
 const ACCEL = 9;
 const PLAYER_R = 0.6;
 const TURN_KEY = 1.9;
-const JUMP = 6.4;
+const JUMP = 7.2;
 const GRAVITY = 20;
+/** Falling this slowly, with the cape spread, is a glide. */
+const GLIDE_FALL = -1.6;
+/** Gliding trades height for ground speed. */
+const GLIDE_SPEED = 16;
 
 /** Applied once, in the grade, since the renderer no longer tone maps. */
 const EXPOSURE = 1.15;
@@ -226,6 +241,9 @@ export function createEngine(
   const bunting: Bunting = buildBunting();
   scene.add(bunting.group);
 
+  const cloudSea: CloudSea = buildCloudSea();
+  scene.add(cloudSea.mesh);
+
   const beacons: Beacons = buildBeacons();
   scene.add(beacons.group);
 
@@ -249,7 +267,9 @@ export function createEngine(
   const post: Post = createPost(renderer, scene, camera, sky.sunMesh, quality, EXPOSURE);
 
   // ── Player state ─────────────────────────────────────────────────────────
-  const pos = new THREE.Vector3(0, 0, 19);
+  // On the home island, facing the arrival monument. The old spawn sat 19m
+  // out, which is over open air now — and happened to land on a neighbour.
+  const pos = new THREE.Vector3(0, 0, 6.5);
   const vel = new THREE.Vector3();
   let yaw = Math.PI;      // facing the arrival monument
   let pitch = 0.16;
@@ -263,9 +283,12 @@ export function createEngine(
   let charYaw = Math.PI;
   let paused = false;
   let moved = false;
-  /** Vertical velocity while jumping; 0 when standing. */
-  let airborne = 0;
-  let height = 0;
+  /** Absolute height. The ground is no longer a single plane at zero. */
+  let posY = terrainHeight(pos.x, pos.z);
+  let vy = 0;
+  let grounded = true;
+  /** True while Space is held in the air: falling slowly, cape spread. */
+  let gliding = false;
 
   const keys = new Set<string>();
   /** Where we are walking to. `id` is null when the destination is open ground. */
@@ -285,8 +308,10 @@ export function createEngine(
     if (!MOVE_KEYS.has(key)) return;
     // Arrows and space would otherwise scroll the page behind the canvas.
     e.preventDefault();
-    if (key === ' ' && airborne === 0) {
-      airborne = JUMP;
+    // Space jumps from the ground and opens the glide in the air.
+    if (key === ' ' && grounded) {
+      vy = JUMP;
+      grounded = false;
       callbacks.onFirstMove();
     }
     keys.add(key);
@@ -331,7 +356,6 @@ export function createEngine(
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const groundHit = new THREE.Vector3();
 
   const onPointerUp = (e: PointerEvent) => {
@@ -360,15 +384,11 @@ export function createEngine(
     // terrain mesh: the mesh is a couple of hundred thousand triangles and
     // three would test all of them. The flat plane is still the fallback for
     // a ray that clears the ground entirely.
-    const onGround =
-      raycastTerrain(raycaster.ray.origin, raycaster.ray.direction, groundHit) ||
-      raycaster.ray.intersectPlane(groundPlane, groundHit) !== null;
+    const hitGround = raycastTerrain(raycaster.ray.origin, raycaster.ray.direction, groundHit);
 
-    if (onGround) {
-      const reach = Math.hypot(groundHit.x, groundHit.z);
-      if (reach < WORLD_RADIUS - 2) {
-        autoTarget = { id: null, x: groundHit.x, z: groundHit.z, reach: 0.8 };
-      }
+    // Only walk to somewhere there is actually ground.
+    if (hitGround && onGround(groundHit.x, groundHit.z)) {
+      autoTarget = { id: null, x: groundHit.x, z: groundHit.z, reach: 0.8 };
     }
   };
 
@@ -421,12 +441,24 @@ export function createEngine(
         pos.z += dz * push;
       }
     }
-    const fromCentre = Math.hypot(pos.x, pos.z);
-    const limit = WORLD_RADIUS - 1.4;
-    if (fromCentre > limit) {
-      pos.x = (pos.x / fromCentre) * limit;
-      pos.z = (pos.z / fromCentre) * limit;
-    }
+  }
+
+  /**
+   * Put a fallen traveller back.
+   *
+   * Walking off an island is allowed and expected — it is how you leave one.
+   * Falling past everything is not a failure state worth punishing, so it
+   * simply returns you to the nearest island, above its surface.
+   */
+  function recover(): void {
+    const isl = nearestIsland(pos.x, pos.z);
+    pos.x = isl.x;
+    pos.z = isl.z;
+    posY = terrainHeight(isl.x, isl.z) + 1.2;
+    vel.set(0, 0, 0);
+    vy = 0;
+    gliding = false;
+    autoTarget = null;
   }
 
   function updateNear(): void {
@@ -560,13 +592,19 @@ export function createEngine(
 
       if (wish.lengthSq() > 0) {
         wish.normalize();
-        // Hills cost you. Sample the ground a stride ahead and scale speed by
-        // the gradient, so climbing has weight and descending does not.
-        const PROBE = 0.9;
-        const ahead = terrainHeight(pos.x + wish.x * PROBE, pos.z + wish.z * PROBE);
-        const gradient = (ahead - terrainHeight(pos.x, pos.z)) / PROBE;
-        const slope = THREE.MathUtils.clamp(1 - gradient * 1.1, 0.45, 1);
-        wish.multiplyScalar((keys.has('shift') ? SPEED * 1.75 : SPEED) * slope);
+        let want = keys.has('shift') ? SPEED * 1.75 : SPEED;
+        if (gliding) {
+          // A glide trades height for distance: you go faster than you can run.
+          want = GLIDE_SPEED;
+        } else if (grounded) {
+          // Hills cost you. Sample the ground a stride ahead and scale speed by
+          // the gradient, so climbing has weight and descending does not.
+          const PROBE = 0.9;
+          const ahead = terrainHeight(pos.x + wish.x * PROBE, pos.z + wish.z * PROBE);
+          const gradient = (ahead - terrainHeight(pos.x, pos.z)) / PROBE;
+          want *= THREE.MathUtils.clamp(1 - gradient * 1.1, 0.45, 1);
+        }
+        wish.multiplyScalar(want);
         if (!moved) {
           moved = true;
           callbacks.onFirstMove();
@@ -581,15 +619,41 @@ export function createEngine(
       collide();
       updateNear();
 
-      // Jumping. Purely for the fun of it — it changes nothing you can reach.
-      if (airborne !== 0 || height > 0) {
-        airborne -= GRAVITY * dt;
-        height += airborne * dt;
-        if (height <= 0) {
-          height = 0;
-          airborne = 0;
-        }
+      /**
+       * Vertical motion.
+       *
+       * The ground is no longer a plane at zero, so this is real: you fall off
+       * an island edge, and holding Space in the air opens a glide that turns
+       * the fall into a crossing. It is the only way between islands.
+       */
+      const ground = terrainHeight(pos.x, pos.z);
+      gliding = !grounded && keys.has(' ') && vy < 1.5;
+
+      if (grounded && posY > ground + 0.35) {
+        // The ground fell away underneath — you have walked off an edge.
+        grounded = false;
       }
+
+      if (!grounded) {
+        vy -= GRAVITY * dt;
+        if (gliding && vy < GLIDE_FALL) {
+          // Not a hard clamp: ease onto the glide so opening it does not
+          // read as hitting an invisible floor.
+          vy += (GLIDE_FALL - vy) * Math.min(1, dt * 7);
+        }
+        posY += vy * dt;
+
+        if (posY <= ground) {
+          posY = ground;
+          vy = 0;
+          grounded = true;
+          gliding = false;
+        }
+      } else {
+        posY = ground;
+      }
+
+      if (posY < FALL_LIMIT) recover();
     }
 
     // A little bob, so walking has weight. Never enough to hurt reading, and
@@ -598,7 +662,6 @@ export function createEngine(
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
     // ── The traveller ──────────────────────────────────────────────────────
-    const foot = terrainHeight(pos.x, pos.z);
     const groundSpeed = Math.hypot(vel.x, vel.z);
 
     // Turn toward travel, by the shortest way round.
@@ -610,21 +673,24 @@ export function createEngine(
       charYaw += THREE.MathUtils.clamp(delta, -8 * dt, 8 * dt);
     }
 
-    character.group.position.set(pos.x, foot + height, pos.z);
+    character.group.position.set(pos.x, posY, pos.z);
     character.group.rotation.y = charYaw;
-    character.update(dt, groundSpeed, height > 0.02, clock.elapsedTime);
+    character.update(dt, groundSpeed, !grounded, clock.elapsedTime);
     cape.update(dt, character.shoulders, vel, clock.elapsedTime);
 
     // ── Camera ─────────────────────────────────────────────────────────────
-    const focusY = foot + height + LOOK_UP;
+    const focusY = posY + LOOK_UP;
     const cosPitch = Math.cos(pitch);
     wantCam.set(
       pos.x - Math.sin(yaw) * CAM_BACK * cosPitch,
       focusY + CAM_UP * 0.5 + Math.sin(pitch) * CAM_BACK,
       pos.z - Math.cos(yaw) * CAM_BACK * cosPitch,
     );
-    // Never let the camera sink into a hillside.
-    wantCam.y = Math.max(wantCam.y, terrainHeight(wantCam.x, wantCam.z) + 0.45);
+    // Never let the camera sink into a hillside — but only where there is one
+    // to sink into, or it would be shoved to the void floor over open air.
+    if (onGround(wantCam.x, wantCam.z)) {
+      wantCam.y = Math.max(wantCam.y, terrainHeight(wantCam.x, wantCam.z) + 0.45);
+    }
 
     // Critically damped: it must catch up without ever overshooting, or the
     // whole world appears to wobble every time you stop.
@@ -650,6 +716,7 @@ export function createEngine(
     windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
     water.update(reducedMotion ? 0 : clock.elapsedTime);
     beacons.update(reducedMotion ? 0 : clock.elapsedTime);
+    cloudSea.update(reducedMotion ? 0 : clock.elapsedTime);
     camera.updateMatrixWorld();
     skyUniforms.uSunDirView.value
       .copy(skyUniforms.uSunDir.value)
@@ -696,6 +763,7 @@ export function createEngine(
       cape.dispose();
       character.dispose();
       beacons.dispose();
+      cloudSea.dispose();
       motes.dispose();
       bunting.dispose();
       grass.dispose();

@@ -1,56 +1,73 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
-import { places, WORLD_RADIUS } from '../data/world';
+import { places, placeById } from '../data/world';
 import { applySkyShading } from './shaders/skyMaterial';
 
 /**
- * The ground.
+ * The islands.
  *
- * `terrainHeight` and `terrainNormal` are the single source of truth for where
- * the ground is. The mesh, the player's feet, click-to-walk, prop placement and
- * (from phase 3) every blade of grass read from these two functions rather than
- * from the geometry, so nothing can disagree about where the surface is.
+ * The world is no longer one disc. Each place sits on its own island floating
+ * in a cloud sea, at its own height, with open air between them — so getting
+ * somewhere means gliding to it.
  *
- * Everything is deterministic: the noise is seeded, so the world is identical
- * on every visit.
+ * `terrainHeight` and `terrainNormal` remain the single source of truth for
+ * where the ground is: the meshes, the player's feet, click-to-walk, prop
+ * placement and every blade of grass read from them, so nothing can disagree
+ * about where the surface is — or about where there is no surface at all.
+ *
+ * Crucially the places themselves have not moved. An island is built *under*
+ * each one, so the directory, the minimap and every position in the content
+ * still line up exactly as before.
  */
 
-/** Rolling amplitude in metres, before the flatten masks. */
-const AMPLITUDE = 4.6;
-const BASE_FREQUENCY = 1 / 44;
-/** How hard the land is pushed into flat tops and steep sides. */
-const TERRACE_LEVELS = 2.4;
+/** How far below the islands the drop goes. Nothing is solid down here. */
+export const VOID_Y = -70;
+/** Below this you have fallen, and get put back on the nearest island. */
+export const FALL_LIMIT = -34;
+/** Where the cloud sea sits between the islands. */
+export const CLOUD_Y = -13;
 
-/** How far past the boundary the land takes to fall away. */
-const CLIFF_RUN = 25;
-/** How deep the surrounding plain sits. Far enough down to read as a drop. */
-const CLIFF_FLOOR = -14;
-/** Where the land has fully fallen; beyond this the height is constant. */
-const CLIFF_END = WORLD_RADIUS + CLIFF_RUN;
+const AMPLITUDE = 2.6;
+const BASE_FREQUENCY = 1 / 26;
 
-/** The plaza is level out to here, then eases back into the hills. */
-const PLAZA_FLAT = 12;
-const PLAZA_FALLOFF = 20;
+/** Level ground around each structure; they have no foundations. */
+const PAD_FLAT = 2.2;
+const PAD_FALLOFF = 6.5;
+
+export interface Island {
+  id: string;
+  x: number;
+  z: number;
+  radius: number;
+  /** Height of its surface. Varied, so crossing is a climb or a dive. */
+  top: number;
+}
 
 /**
- * The pool is a basin cut into the ground, not a disc lying on top of it.
+ * One island per place, at a hand-set height.
  *
- * A flat blue circle on flat ground reads as painted floor however good the
- * shader is — water needs somewhere to sit. It is placed off to one side of
- * the plaza, in the widest gap between two paths: a ring of water around the
- * arrival monument would look better and make you wade to reach it.
+ * Radii are deliberately small enough to leave open air between neighbours —
+ * the gaps run from about four metres to a dozen, which is the range a glide
+ * crosses and a walk cannot.
  */
-export const POOL_CENTRE: [number, number] = [-9.2, -1.0];
-export const POOL_RADIUS = 2.9;
-const POOL_DEPTH = 0.75;
-/** The waterline: below the rim, above the floor of the basin. */
-export const POOL_SURFACE = -0.28;
+export const islands: Island[] = [
+  { id: 'origin', x: 0, z: 0, radius: 9.5, top: 0 },
+  { id: 'about', x: -15, z: -11, radius: 6.4, top: 2.6 },
+  { id: 'record', x: -18, z: 8, radius: 6.4, top: 5.4 },
+  { id: 'orb', x: 14, z: -13, radius: 6.6, top: -2.2 },
+  { id: 'git-city', x: 22, z: 3, radius: 6.8, top: 7.2 },
+  { id: 'resume-roaster', x: 11, z: 16, radius: 6.4, top: 1.2 },
+  { id: 'commerce-api', x: -5, z: 22, radius: 6.6, top: 4.4 },
+  { id: 'skills', x: 2, z: -24, radius: 6.8, top: -3.6 },
+  { id: 'contact', x: -24, z: 21, radius: 6.4, top: 8.6 },
+];
 
-/** Structures are box geometry with no foundations, so each gets a level pad. */
-const PAD_FLAT = 2.5;
-const PAD_FALLOFF = 9;
+/** The pool, on the home island. */
+export const POOL_CENTRE: [number, number] = [-5.6, -4.4];
+export const POOL_RADIUS = 2.2;
+const POOL_DEPTH = 0.7;
+export const POOL_SURFACE = -0.3;
 
-/** Deterministic PRNG so the seeded noise is reproducible across reloads. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -69,24 +86,16 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/**
- * Pads precomputed once. `terrainHeight` runs well over a hundred thousand
- * times just to build the mesh, and again per grass blade in phase 3, so the
- * inner loop reads a flat array rather than walking `places` objects.
- */
-const pads: { x: number; z: number; flat: number; falloff: number }[] = places.map((p) => ({
+const pads = places.map((p) => ({
   x: p.at[0],
   z: p.at[1],
   flat: p.solid + PAD_FLAT,
   falloff: p.solid + PAD_FALLOFF,
 }));
 
-/** 1 where the ground must be dead level, 0 where the hills run free. */
+/** 1 where the ground must be dead level for a structure to stand on it. */
 function flattenAmount(x: number, z: number): number {
-  // The plaza.
-  let level = 1 - smoothstep(PLAZA_FLAT, PLAZA_FALLOFF, Math.hypot(x, z));
-  if (level >= 1) return 1;
-
+  let level = 0;
   for (let i = 0; i < pads.length; i += 1) {
     const pad = pads[i];
     const d = Math.hypot(x - pad.x, z - pad.z);
@@ -98,65 +107,69 @@ function flattenAmount(x: number, z: number): number {
   return level;
 }
 
-/**
- * Push a height toward flat tops with steep sides between them.
- *
- * Plain fbm gives soft rolling dunes. The land being matched is not dunes — it
- * is plateaus and headlands: broad level tops, then a short steep fall to the
- * next level. Quantising the height into bands and easing sharply across each
- * band boundary produces exactly that, and because it is a pure function of
- * the input it stays compatible with everything that samples the terrain.
- */
-function terrace(h: number): number {
-  const scaled = (h / AMPLITUDE) * TERRACE_LEVELS;
-  const band = Math.floor(scaled);
-  const across = scaled - band;
-  // Flat for most of the band, then a fast riser through the middle.
-  const eased = smoothstep(0.22, 0.78, across);
-  return ((band + eased) / TERRACE_LEVELS) * AMPLITUDE;
-}
-
-/** Three octaves of simplex, terraced into plateaus. */
+/** Gentle relief on an island's surface. */
 function rolling(x: number, z: number): number {
-  let h = noise2D(x * BASE_FREQUENCY, z * BASE_FREQUENCY);
-  h += noise2D(x * BASE_FREQUENCY * 2.1, z * BASE_FREQUENCY * 2.1) * 0.45;
-  h += noise2D(x * BASE_FREQUENCY * 4.3, z * BASE_FREQUENCY * 4.3) * 0.2;
-  // Terrace the broad shape, then lay the fine octave back on top so the tops
-  // are level but not glassy.
-  const shaped = terrace((h / 1.65) * AMPLITUDE);
-  return shaped + noise2D(x * BASE_FREQUENCY * 6.1, z * BASE_FREQUENCY * 6.1) * 0.35;
+  return (
+    noise2D(x * BASE_FREQUENCY, z * BASE_FREQUENCY) * AMPLITUDE +
+    noise2D(x * BASE_FREQUENCY * 2.3, z * BASE_FREQUENCY * 2.3) * AMPLITUDE * 0.4
+  );
 }
 
 /**
- * Ground height at a world position.
+ * Ground height at a world position, or the void between islands.
  *
- * Level on the plaza and under every structure, rolling in between, and falling
- * away past the boundary into the plain the cloud sea swallows.
+ * The rim falls away steeply: raising the blend to a low power keeps the
+ * surface almost level right out to the edge and then drops it, which is what
+ * gives an island a cliff rather than a slope into nothing.
  */
 export function terrainHeight(x: number, z: number): number {
-  const radius = Math.hypot(x, z);
+  let best = VOID_Y;
 
-  // Past the drop the height is constant, and there is nothing to compute.
-  if (radius >= CLIFF_END) return CLIFF_FLOOR;
+  for (let i = 0; i < islands.length; i += 1) {
+    const isl = islands[i];
+    const d = Math.hypot(x - isl.x, z - isl.z);
+    if (d > isl.radius + 1.4) continue;
 
-  let h = rolling(x, z) * (1 - flattenAmount(x, z));
+    const edge = 1 - smoothstep(isl.radius - 1.8, isl.radius + 1.4, d);
+    if (edge <= 0) continue;
 
-  // Cut the basin, with a soft lip so the ground dishes into it.
-  const poolDist = Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]);
-  if (poolDist < POOL_RADIUS + 1.6) {
-    h -= (1 - smoothstep(POOL_RADIUS - 0.6, POOL_RADIUS + 1.6, poolDist)) * POOL_DEPTH;
+    let surface = isl.top + rolling(x, z) * (1 - flattenAmount(x, z));
+
+    // The pool basin, cut into the home island.
+    if (isl.id === 'origin') {
+      const pd = Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]);
+      if (pd < POOL_RADIUS + 1.3) {
+        surface -= (1 - smoothstep(POOL_RADIUS - 0.5, POOL_RADIUS + 1.3, pd)) * POOL_DEPTH;
+      }
+    }
+
+    const h = VOID_Y + (surface - VOID_Y) * Math.pow(edge, 0.3);
+    if (h > best) best = h;
   }
-
-  if (radius > WORLD_RADIUS) {
-    const t = smoothstep(0, 1, (radius - WORLD_RADIUS) / CLIFF_RUN);
-    h = h * (1 - t) + CLIFF_FLOOR * t;
-  }
-  return h;
+  return best;
 }
 
-const NORMAL_EPS = 0.35;
+/** True where there is real ground underfoot rather than the drop. */
+export function onGround(x: number, z: number): boolean {
+  return terrainHeight(x, z) > VOID_Y + 40;
+}
 
-/** Surface normal, by central difference on `terrainHeight`. */
+/** The island nearest a position, for putting a fallen traveller back. */
+export function nearestIsland(x: number, z: number): Island {
+  let best = islands[0];
+  let bestD = Infinity;
+  for (const isl of islands) {
+    const d = Math.hypot(x - isl.x, z - isl.z);
+    if (d < bestD) {
+      bestD = d;
+      best = isl;
+    }
+  }
+  return best;
+}
+
+const NORMAL_EPS = 0.3;
+
 export function terrainNormal(x: number, z: number, target = new THREE.Vector3()): THREE.Vector3 {
   const hL = terrainHeight(x - NORMAL_EPS, z);
   const hR = terrainHeight(x + NORMAL_EPS, z);
@@ -168,24 +181,21 @@ export function terrainNormal(x: number, z: number, target = new THREE.Vector3()
 /**
  * Where a ray meets the ground.
  *
- * Marched against `terrainHeight` rather than raycast against the mesh: the
- * mesh is a couple of hundred thousand triangles, and three would test every
- * one of them on each click. Marching costs a fixed handful of height samples
- * and cannot disagree with the rest of the world about where the ground is.
+ * Marched against `terrainHeight` rather than raycast against the meshes: they
+ * are a couple of hundred thousand triangles between them and three would test
+ * every one. Marching costs a fixed handful of samples and cannot disagree
+ * with the ground the traveller walks on.
  */
 export function raycastTerrain(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   target: THREE.Vector3,
-  maxDistance = 260,
+  maxDistance = 220,
 ): boolean {
-  // Looking up, or level: there is no ground ahead to hit.
   if (direction.y >= -1e-4) return false;
-
-  const STEPS = 96;
+  const STEPS = 110;
   const step = maxDistance / STEPS;
   let prevT = 0;
-  // Starting underground means there is no surface ahead to fall onto.
   if (origin.y - terrainHeight(origin.x, origin.z) < 0) return false;
 
   for (let i = 1; i <= STEPS; i += 1) {
@@ -193,18 +203,13 @@ export function raycastTerrain(
     const x = origin.x + direction.x * t;
     const y = origin.y + direction.y * t;
     const z = origin.z + direction.z * t;
-    const gap = y - terrainHeight(x, z);
-
-    if (gap <= 0) {
-      // Crossed the surface between prevT and t — bisect to tighten it up.
+    if (y - terrainHeight(x, z) <= 0) {
       let lo = prevT;
       let hi = t;
       for (let j = 0; j < 12; j += 1) {
         const mid = (lo + hi) * 0.5;
-        const mx = origin.x + direction.x * mid;
         const my = origin.y + direction.y * mid;
-        const mz = origin.z + direction.z * mid;
-        if (my - terrainHeight(mx, mz) <= 0) hi = mid;
+        if (my - terrainHeight(origin.x + direction.x * mid, origin.z + direction.z * mid) <= 0) hi = mid;
         else lo = mid;
       }
       const hit = (lo + hi) * 0.5;
@@ -213,7 +218,8 @@ export function raycastTerrain(
         origin.y + direction.y * hit,
         origin.z + direction.z * hit,
       );
-      return true;
+      // Only a hit if it landed on real ground, not somewhere over the drop.
+      return onGround(target.x, target.z);
     }
     prevT = t;
   }
@@ -225,69 +231,36 @@ export interface Terrain {
   dispose(): void;
 }
 
-/** Half-width of the detailed mesh: the walkable world plus the whole drop. */
-const NEAR_HALF = WORLD_RADIUS + 30;
-/** The coarse plain begins where the detailed square is guaranteed to reach. */
-const FAR_INNER = NEAR_HALF;
-const FAR_OUTER = 400;
-
-const GRASS_LOW = new THREE.Color(0x6fa046);
+const GRASS_LOW = new THREE.Color(0x5d9440);
 const GRASS_HIGH = new THREE.Color(0x86b85a);
-const ROCK = new THREE.Color(0xc4b49a);
-const SAND = new THREE.Color(0xe0d2b0);
+const ROCK = new THREE.Color(0x8b8574);
+const UNDERSIDE = new THREE.Color(0x6b6357);
 
-/**
- * Paint a displaced geometry by slope and height.
- *
- * Baked into vertex colours in JS rather than done in the shader: it is a
- * one-off cost at startup and it keeps the material a plain standard material,
- * which means it goes through `applySkyShading` like everything else.
- */
-function paint(geometry: THREE.BufferGeometry): void {
+function paint(geometry: THREE.BufferGeometry, underside: boolean): void {
   const position = geometry.attributes.position;
   const normal = geometry.attributes.normal;
-  const count = position.count;
-  const colors = new Float32Array(count * 3);
+  const colors = new Float32Array(position.count * 3);
   const c = new THREE.Color();
 
-  for (let i = 0; i < count; i += 1) {
+  for (let i = 0; i < position.count; i += 1) {
     const x = position.getX(i);
-    const y = position.getY(i);
     const z = position.getZ(i);
-    const slope = 1 - normal.getY(i);
 
-    // Grass, varied by a low-frequency wash so it is never one flat green.
-    const tint = tintNoise2D(x * 0.014, z * 0.014) * 0.5 + 0.5;
-    c.copy(GRASS_LOW).lerp(GRASS_HIGH, tint);
-
-    // Rock wherever the ground is too steep to hold soil.
-    c.lerp(ROCK, smoothstep(0.28, 0.5, slope));
-
-    // A narrow pale shoreline just outside the plaza, where the pool will sit
-    // in phase 3. Deliberately a band and not a disc — widened, it turns the
-    // whole plaza surround to sand.
-    const shore = Math.hypot(x, z);
-    if (shore > PLAZA_FLAT - 2 && shore < PLAZA_FALLOFF && y < 0.6) {
-      const band = smoothstep(PLAZA_FLAT - 2, PLAZA_FLAT + 1, shore)
-        * (1 - smoothstep(PLAZA_FLAT + 3, PLAZA_FALLOFF, shore));
-      c.lerp(SAND, band * 0.5);
+    if (underside) {
+      // Bare rock below, darkening as it goes down into the cloud.
+      const depth = Math.min(1, Math.max(0, -position.getY(i) / 16));
+      c.copy(ROCK).lerp(UNDERSIDE, depth);
+    } else {
+      const tint = tintNoise2D(x * 0.02, z * 0.02) * 0.5 + 0.5;
+      c.copy(GRASS_LOW).lerp(GRASS_HIGH, tint);
+      c.lerp(ROCK, smoothstep(0.3, 0.55, 1 - normal.getY(i)));
     }
 
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
     colors[i * 3 + 2] = c.b;
   }
-
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-}
-
-function displace(geometry: THREE.BufferGeometry, yOffset = 0): void {
-  const position = geometry.attributes.position;
-  for (let i = 0; i < position.count; i += 1) {
-    position.setY(i, terrainHeight(position.getX(i), position.getZ(i)) + yOffset);
-  }
-  position.needsUpdate = true;
-  geometry.computeVertexNormals();
 }
 
 export function buildTerrain(quality: 'high' | 'low'): Terrain {
@@ -301,44 +274,62 @@ export function buildTerrain(quality: 'high' | 'low'): Terrain {
       metalness: 0,
       envMapIntensity: 0.4,
     }),
-    // Much weaker than the props, and warm rather than sky-blue.
-    //
-    // A fresnel rim keys off 1 - dot(N, V), which on a large ground plane
-    // viewed at a grazing angle approaches 1 across everything you can see —
-    // so the whole floor blows out to pale blue. Rim light belongs on
-    // silhouettes; the ground only wants a hint of it.
     { rimStrength: 0.16, rimPower: 3.4, rimColor: 0xdff0c0 },
   );
   disposables.push(material);
 
-  // The detailed ground you actually walk on.
-  const segments = quality === 'high' ? 320 : 128;
-  const near = new THREE.PlaneGeometry(NEAR_HALF * 2, NEAR_HALF * 2, segments, segments);
-  near.rotateX(-Math.PI / 2);
-  displace(near);
-  paint(near);
-  disposables.push(near);
+  const rings = quality === 'high' ? 44 : 22;
+  const segments = quality === 'high' ? 72 : 40;
 
-  const nearMesh = new THREE.Mesh(near, material);
-  nearMesh.receiveShadow = true;
-  group.add(nearMesh);
+  for (const isl of islands) {
+    // The top: a radial disc, so the density follows the island's shape and no
+    // triangles are spent on the empty air around it.
+    const top = new THREE.RingGeometry(0.0001, isl.radius + 1.4, segments, rings);
+    top.rotateX(-Math.PI / 2);
+    const pos = top.attributes.position;
+    for (let i = 0; i < pos.count; i += 1) {
+      const x = pos.getX(i) + isl.x;
+      const z = pos.getZ(i) + isl.z;
+      pos.setY(i, terrainHeight(x, z) - isl.top);
+    }
+    pos.needsUpdate = true;
+    top.computeVertexNormals();
+    paint(top, false);
+    const topMesh = new THREE.Mesh(top, material);
+    topMesh.position.set(isl.x, isl.top, isl.z);
+    topMesh.receiveShadow = true;
+    topMesh.castShadow = quality === 'high';
+    group.add(topMesh);
+    disposables.push(top);
 
-  /**
-   * The plain out to the horizon.
-   *
-   * Its inner edge is the near square's *inscribed* radius, so the square
-   * always covers everything inside it and there is no gap; the overlap out at
-   * the square's corners is all beyond the drop, where the height is constant,
-   * so a few centimetres of offset keeps the two from z-fighting.
-   */
-  const far = new THREE.RingGeometry(FAR_INNER, FAR_OUTER, 96, 24);
-  far.rotateX(-Math.PI / 2);
-  displace(far, -0.06);
-  paint(far);
-  disposables.push(far);
-
-  const farMesh = new THREE.Mesh(far, material);
-  group.add(farMesh);
+    /**
+     * The underside: a cone hanging beneath the rim.
+     *
+     * Without it an island is a flat cut-out the moment you get below its
+     * horizon — and the whole point of flying between them is that you spend
+     * time below their horizon.
+     */
+    const depth = 9 + isl.radius * 0.9;
+    const under = new THREE.ConeGeometry(isl.radius + 1.2, depth, segments, 4, true);
+    under.translate(0, -depth / 2, 0);
+    // Rough the cone up so it reads as broken rock rather than a funnel.
+    const upos = under.attributes.position;
+    for (let i = 0; i < upos.count; i += 1) {
+      const y = upos.getY(i);
+      if (y > -0.4 || y < -depth + 0.6) continue;
+      const wobble = 1 + noise2D((upos.getX(i) + isl.x) * 0.28, (upos.getZ(i) + isl.z) * 0.28) * 0.22;
+      upos.setX(i, upos.getX(i) * wobble);
+      upos.setZ(i, upos.getZ(i) * wobble);
+    }
+    upos.needsUpdate = true;
+    under.computeVertexNormals();
+    paint(under, true);
+    const underMesh = new THREE.Mesh(under, material);
+    underMesh.position.set(isl.x, isl.top - 0.25, isl.z);
+    underMesh.castShadow = quality === 'high';
+    group.add(underMesh);
+    disposables.push(under);
+  }
 
   return {
     group,
@@ -348,3 +339,6 @@ export function buildTerrain(quality: 'high' | 'low'): Terrain {
     },
   };
 }
+
+/** Kept for callers that still want a nominal world extent. */
+export { placeById };

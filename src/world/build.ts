@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { places, WORLD_RADIUS, type Place } from '../data/world';
+import { places, type Place } from '../data/world';
 import { makeSign } from './labels';
 import type { Materials } from './materials';
 import { POOL_CENTRE, POOL_RADIUS, POOL_SURFACE, terrainHeight } from './terrain';
@@ -121,69 +121,13 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   }
 
 
-  // A low wall so the edge of the world reads as deliberate. It has to follow
-  // the ground now — a flat torus on rolling terrain buries itself on the rises
-  // and floats over the dips — so it is a tube swept along the boundary.
-  const rimPoints: THREE.Vector3[] = [];
-  const rimSegments = quality === 'high' ? 128 : 64;
-  for (let i = 0; i < rimSegments; i += 1) {
-    const a = (i / rimSegments) * Math.PI * 2;
-    const x = Math.cos(a) * WORLD_RADIUS;
-    const z = Math.sin(a) * WORLD_RADIUS;
-    rimPoints.push(new THREE.Vector3(x, terrainHeight(x, z) + 0.22, z));
-  }
-  const rimCurve = new THREE.CatmullRomCurve3(rimPoints, true, 'catmullrom', 0.4);
-  const rimGeo = track(new THREE.TubeGeometry(rimCurve, rimSegments * 2, 0.22, 6, true));
-  const rim = new THREE.Mesh(rimGeo, metal);
-  rim.castShadow = quality === 'high';
-  root.add(rim);
-
-  // Paths from the plaza to each structure. Wayfinding first — an empty
-  // ground plane gives you no reason to pick one direction over another.
-  //
-  // Each one is a ribbon built directly in world space and dropped onto the
-  // ground, rather than a single quad: over hills a flat quad either sinks into
-  // the rise or hangs in the air over the dip.
-  const pathMat = track(new THREE.MeshBasicMaterial({
-    color: 0xd8cdae, transparent: true, opacity: 0.75, depthWrite: false,
-  }));
-  const PATH_ALONG = 28;
-  const PATH_HALF = 1.5;
-
-  for (const place of places) {
-    if (place.id === 'origin') continue;
-    const len = Math.hypot(place.at[0], place.at[1]);
-    const dx = place.at[0] / len;
-    const dz = place.at[1] / len;
-    // Perpendicular, to give the ribbon its width.
-    const nx = -dz;
-    const nz = dx;
-
-    const vertices = new Float32Array((PATH_ALONG + 1) * 2 * 3);
-    const indices: number[] = [];
-    for (let i = 0; i <= PATH_ALONG; i += 1) {
-      const t = (i / PATH_ALONG) * len;
-      for (let j = 0; j < 2; j += 1) {
-        const s = j === 0 ? -PATH_HALF : PATH_HALF;
-        const x = dx * t + nx * s;
-        const z = dz * t + nz * s;
-        const v = (i * 2 + j) * 3;
-        vertices[v] = x;
-        vertices[v + 1] = terrainHeight(x, z) + 0.04;
-        vertices[v + 2] = z;
-      }
-      if (i < PATH_ALONG) {
-        const a = i * 2;
-        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-      }
-    }
-
-    const geo = track(new THREE.BufferGeometry());
-    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geo.setIndex(indices);
-    geo.computeVertexNormals();
-    root.add(new THREE.Mesh(geo, pathMat));
-  }
+  /**
+   * No boundary rim, and no radial paths.
+   *
+   * Both assumed one continuous disc. There is no single edge to trim now, and
+   * a path from the plaza to a place would run out over open air — the way
+   * between islands is the glide, and the beacons carry the wayfinding.
+   */
 
   // ── Structures ───────────────────────────────────────────────────────────
   /**

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { placeById } from '../data/world';
 import { applySkyShading } from './shaders/skyMaterial';
 import { WIND_GLSL, windUniforms } from './shaders/wind';
-import { terrainHeight } from './terrain';
+import { islands, terrainHeight } from './terrain';
 
 /**
  * Bunting.
@@ -88,26 +88,27 @@ export function buildBunting(): Bunting {
     flags.push(...stringLine(a, b, 0.5, 9, cord));
   }
 
-  // And a ring around the plaza, strung post to post.
-  const RING_R = 13.5;
-  const POSTS = 12;
-  for (let i = 0; i < POSTS; i += 1) {
-    const a0 = (i / POSTS) * Math.PI * 2;
-    const a1 = ((i + 1) / POSTS) * Math.PI * 2;
-    const x0 = Math.cos(a0) * RING_R;
-    const z0 = Math.sin(a0) * RING_R;
-    const x1 = Math.cos(a1) * RING_R;
-    const z1 = Math.sin(a1) * RING_R;
-    // Roughly every 0.6m along the span, so it reads as a continuous run
-    // rather than as scattered triangles.
-    const span = Math.hypot(x1 - x0, z1 - z0);
-    flags.push(...stringLine(
-      new THREE.Vector3(x0, terrainHeight(x0, z0) + 3.1, z0),
-      new THREE.Vector3(x1, terrainHeight(x1, z1) + 3.1, z1),
-      0.35,
-      Math.max(4, Math.round(span / 0.6)),
-      cord,
-    ));
+  // And a run around the rim of each island, strung post to post. It used to
+  // ring the plaza at a fixed radius, which is open air now.
+  for (const isl of islands) {
+    const POSTS = Math.max(6, Math.round(isl.radius * 1.5));
+    const ringR = isl.radius - 1.5;
+    for (let i = 0; i < POSTS; i += 1) {
+      const a0 = (i / POSTS) * Math.PI * 2;
+      const a1 = ((i + 1) / POSTS) * Math.PI * 2;
+      const x0 = isl.x + Math.cos(a0) * ringR;
+      const z0 = isl.z + Math.sin(a0) * ringR;
+      const x1 = isl.x + Math.cos(a1) * ringR;
+      const z1 = isl.z + Math.sin(a1) * ringR;
+      const span = Math.hypot(x1 - x0, z1 - z0);
+      flags.push(...stringLine(
+        new THREE.Vector3(x0, terrainHeight(x0, z0) + 2.9, z0),
+        new THREE.Vector3(x1, terrainHeight(x1, z1) + 2.9, z1),
+        0.3,
+        Math.max(3, Math.round(span / 0.6)),
+        cord,
+      ));
+    }
   }
 
   // A flag: a triangle hanging point-down from the line.
