@@ -37,9 +37,11 @@ export default function App() {
 
     // Shadows carry most of the sense of solidity here and the scene is only a
     // few dozen meshes, so anything that is not a phone gets the full pass.
+    // Only a genuinely capable GPU gets the full pass. 'medium' now means an
+    // integrated chip that reports plenty of CPU, and it belongs on the light
+    // path with the phones, not with the discrete cards.
     const tier = deviceTier();
-    const quality: 'high' | 'low' =
-      tier === 'high' || tier === 'medium' ? 'high' : 'low';
+    const quality: 'high' | 'low' = tier === 'high' ? 'high' : 'low';
     const engine = createEngine(
       canvas,
       {
@@ -54,6 +56,9 @@ export default function App() {
       },
       quality,
       prefersReducedMotion(),
+      // Geometry is cheap even where the post chain is not, so an integrated
+      // desktop GPU still gets a full meadow — only a phone gets a thin one.
+      tier === 'low' ? 20000 : tier === 'medium' ? 95000 : 140000,
     );
 
     if (!engine) {
@@ -67,9 +72,18 @@ export default function App() {
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
 
+    // If the GPU drops the context the canvas goes black and stays black, so
+    // fall back to the page rather than leaving the visitor staring at nothing.
+    const onContextLost = () => {
+      setForcedRead(true);
+      setMode('reading');
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost);
+
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('orientationchange', onResize);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       engine.dispose();
       engineRef.current = null;
     };

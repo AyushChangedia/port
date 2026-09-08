@@ -1,9 +1,31 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { places, WORLD_RADIUS } from '../data/world';
-import { buildWorld, type BuiltWorld } from './build';
+import { places } from '../data/world';
+import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
+import { buildBeacons, type Beacons } from './beacons';
+import { buildBunting, type Bunting } from './bunting';
+import { buildCape, type Cape } from './cape';
+import { buildCloudSea, type CloudSea } from './cloudsea';
+import { buildCharacter, type Character } from './character';
+import { buildGrass, type Grass } from './grass';
+import { buildMotes, type Motes } from './motes';
+import { buildWater, type Water } from './water';
+import { windUniforms } from './shaders/wind';
 import { createMaterials } from './materials';
 import { buildScenery, type Scenery } from './scenery';
+import { createPost, type Post } from './post';
+import {
+  buildTerrain,
+  FALL_LIMIT,
+  nearestIsland,
+  onGround,
+  POOL_CENTRE,
+  POOL_SURFACE,
+  raycastTerrain,
+  terrainHeight,
+  type Terrain,
+} from './terrain';
+import { skyUniforms } from './shaders/skyCommon';
 import { makeSky } from './sky';
 
 /**
@@ -36,48 +58,93 @@ export interface Engine {
   dispose(): void;
 }
 
-const EYE = 1.68;
+/** Where the camera sits relative to the traveller, before yaw and pitch. */
+const CAM_BACK = 4.4;
+const CAM_UP = 2.05;
+/** What it looks at: chest height, not the feet. */
+const LOOK_UP = 1.35;
 const SPEED = 9.5;
 const ACCEL = 9;
 const PLAYER_R = 0.6;
 const TURN_KEY = 1.9;
-const JUMP = 6.4;
+const JUMP = 7.2;
 const GRAVITY = 20;
+/** Falling this slowly, with the cape spread, is a glide. */
+const GLIDE_FALL = -1.6;
+/** Gliding trades height for ground speed. */
+const GLIDE_SPEED = 16;
+
+/** Applied once, in the grade, since the renderer no longer tone maps. */
+const EXPOSURE = 1.15;
+/** Half-width of the shadow box that follows the player, in metres. */
+const SHADOW_BOX = 30;
+const SHADOW_MAP = 4096;
+/** Integrated parts cannot afford 4096, but they can afford this. */
+const SHADOW_MAP_LIGHT = 2048;
+/** How far the sun sits from the player. Only the direction matters. */
+const SUN_DISTANCE = 60;
 
 export function createEngine(
   canvas: HTMLCanvasElement,
   callbacks: EngineCallbacks,
   quality: 'high' | 'low',
   reducedMotion = false,
+  grassDensity = 140000,
 ): Engine | null {
   let renderer: THREE.WebGLRenderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: quality === 'high' });
+    // No MSAA: a composer renders into its own target, where the canvas
+    // antialias flag does nothing. SMAA in the chain does the work instead.
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
   } catch {
     return null;
   }
 
-  const maxDpr = Math.min(window.devicePixelRatio || 1, quality === 'high' ? 2 : 1.5);
+  /**
+   * Budget the drawing buffer by total pixels, not by device pixel ratio.
+   *
+   * The post chain allocates several full-size half-float targets, and on a
+   * wide window at DPR 2 that plus the shadow map is enough to exhaust GPU
+   * memory and lose the context outright — a black canvas with no error. A
+   * ratio cap alone does not bound this, because the cost scales with window
+   * area as well; a pixel budget does. 4.2M is a little over 1440p, which is
+   * the target this is tuned for.
+   */
+  const PIXEL_BUDGET = quality === 'high' ? 4.2e6 : 1.8e6;
+  const cssPixels = Math.max(1, window.innerWidth * window.innerHeight);
+  const maxDpr = Math.min(
+    window.devicePixelRatio || 1,
+    quality === 'high' ? 2 : 1.5,
+    Math.sqrt(PIXEL_BUDGET / cssPixels),
+  );
   /**
    * Adaptive resolution.
    *
    * This scene is fill-rate bound, so the honest lever on a struggling GPU is
    * pixels, not geometry — dropping the buffer resolution keeps the world
    * intact and the frame rate usable. Scales back up when there is headroom.
+   *
+   * The floor is 75%, not 55%: below about three quarters the drop is itself
+   * plainly visible as blur, which trades one complaint for another.
    */
   let renderScale = 1;
   let slowFrames = 0;
   let fastFrames = 0;
   renderer.setPixelRatio(maxDpr);
   renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.shadowMap.enabled = quality === 'high';
+  // Shadows on everywhere. Turning them off on the light path is what made
+  // that path read as flat cardboard: nearly all the sense of form in this art
+  // direction comes from contact shadow, not from the post chain.
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  // Physically based materials need tone mapping or every highlight clips.
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // The scene renders linear into a half-float buffer; exposure and ACES are
+  // applied once at the end of the post chain. Tone mapping here as well would
+  // apply the curve twice and crush the sun before bloom ever sees it.
+  renderer.toneMapping = THREE.NoToneMapping;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xdfe3e6, 80, 260);
+  // No scene.fog: every world material replaces three's fog outright with
+  // aerial perspective that takes the colour of the sky in the view direction.
 
   // A generated indoor-studio environment, used purely as a reflection probe.
   // It costs one render at startup and is what makes glass and metal read as
@@ -85,10 +152,13 @@ export function createEngine(
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
   scene.environment = envRT.texture;
-  scene.environmentIntensity = 0.55;
+  // Dimmed hard: the sky gradient and the rim light carry the lighting now, and
+  // a studio probe at full strength fights both.
+  scene.environmentIntensity = 0.22;
 
   const sky = makeSky();
   scene.add(sky.mesh);
+  scene.add(sky.sunHolder);
 
   const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1200);
 
@@ -105,40 +175,120 @@ export function createEngine(
   frameForAspect();
 
   // Light: one sun for shape and shadow, one hemisphere so nothing goes black.
-  const sun = new THREE.DirectionalLight(0xfff4e2, 1.85);
-  sun.position.set(22, 34, 14);
-  if (quality === 'high') {
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 110;
-    const s = 44;
-    sun.shadow.camera.left = -s;
-    sun.shadow.camera.right = s;
-    sun.shadow.camera.top = s;
-    sun.shadow.camera.bottom = -s;
-    sun.shadow.bias = -0.0012;
-  }
+  const sun = new THREE.DirectionalLight(0xfff1d6, 2.9);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xc4bfb2, 1.15));
+  scene.add(sun.target);
+  {
+    sun.castShadow = true;
+    const size = quality === 'high' ? SHADOW_MAP : SHADOW_MAP_LIGHT;
+    sun.shadow.mapSize.set(size, size);
+    // Depth only: the default also allocates colour, which is wasted here and
+    // counts against the same GPU memory budget as the post chain.
+    sun.shadow.autoUpdate = true;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = SUN_DISTANCE * 2.4;
+    sun.shadow.camera.left = -SHADOW_BOX;
+    sun.shadow.camera.right = SHADOW_BOX;
+    sun.shadow.camera.top = SHADOW_BOX;
+    sun.shadow.camera.bottom = -SHADOW_BOX;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
+    sun.shadow.camera.updateProjectionMatrix();
+  }
+
+  // Warm ground bounce against a cool sky: this is what keeps the shadow side
+  // coloured rather than grey and dead. Kept low — at 0.9 it filled every
+  // shadow to the point that nothing in the scene had any weight.
+  scene.add(new THREE.HemisphereLight(0x9fd4ff, 0xc8a870, 0.5));
+
+  /**
+   * Point the sun at the player.
+   *
+   * The shadow box is only 60m across so it can afford real resolution, which
+   * means it has to travel with you. Positions are snapped to the shadow map's
+   * texel size, otherwise every step makes the shadow edges crawl.
+   */
+  const texel = (SHADOW_BOX * 2) / (quality === 'high' ? SHADOW_MAP : SHADOW_MAP_LIGHT);
+  function aimSun(x: number, z: number): void {
+    const dir = skyUniforms.uSunDir.value;
+    const sx = Math.round(x / texel) * texel;
+    const sz = Math.round(z / texel) * texel;
+    sun.position.set(sx + dir.x * SUN_DISTANCE, dir.y * SUN_DISTANCE, sz + dir.z * SUN_DISTANCE);
+    sun.target.position.set(sx, 0, sz);
+    sun.target.updateMatrixWorld();
+  }
 
   const materials = createMaterials(quality);
+
+  const terrain: Terrain = buildTerrain(quality);
+  scene.add(terrain.group);
+
   const world: BuiltWorld = buildWorld(quality, materials);
   scene.add(world.root);
 
   const scenery: Scenery = buildScenery(materials, quality);
   scene.add(scenery.group);
 
+  /**
+   * The meadow's density follows the GPU's geometry budget, not the post
+   * chain's. An integrated part renders a hundred thousand static blades
+   * comfortably; what it cannot carry is the HDR chain, and those are separate
+   * questions.
+   */
+  const grass: Grass = buildGrass(grassDensity);
+  scene.add(grass.group);
+
+  const bunting: Bunting = buildBunting();
+  scene.add(bunting.group);
+
+  const cloudSea: CloudSea = buildCloudSea();
+  scene.add(cloudSea.mesh);
+
+  const beacons: Beacons = buildBeacons();
+  scene.add(beacons.group);
+
+  const motes: Motes = buildMotes(quality);
+  scene.add(motes.points);
+
+  const character: Character = buildCharacter(reducedMotion);
+  scene.add(character.group);
+
+  const cape: Cape = buildCape(reducedMotion);
+  scene.add(cape.mesh);
+
+  const water: Water = buildWater(PLAZA_RADIUS, POOL_CENTRE);
+  water.mesh.position.set(POOL_CENTRE[0], POOL_SURFACE, POOL_CENTRE[1]);
+  scene.add(water.mesh);
+
+  // Reduced motion stops the weather dead: no sway, no flutter, no drift. The
+  // clock is frozen rather than merely scaled, so nothing creeps.
+  windUniforms.uWind.value = reducedMotion ? 0 : 1;
+
+  const post: Post = createPost(renderer, scene, camera, sky.sunMesh, quality, EXPOSURE);
+
   // ── Player state ─────────────────────────────────────────────────────────
-  const pos = new THREE.Vector3(0, 0, 19);
+  // On the home island, facing the arrival monument. The old spawn sat 19m
+  // out, which is over open air now — and happened to land on a neighbour.
+  const pos = new THREE.Vector3(0, 0, 6.5);
   const vel = new THREE.Vector3();
   let yaw = Math.PI;      // facing the arrival monument
-  let pitch = window.innerWidth / window.innerHeight < 0.85 ? 0.12 : 0.015;
+  let pitch = 0.16;
+  /**
+   * Which way the traveller faces, damped toward the direction of travel.
+   *
+   * Deliberately separate from the camera's yaw: movement stays camera-
+   * relative, but the figure turns to face where it is going, and `onPose`
+   * reports *this* — the minimap tracks the traveller, not the lens.
+   */
+  let charYaw = Math.PI;
   let paused = false;
   let moved = false;
-  /** Vertical velocity while jumping; 0 when standing. */
-  let airborne = 0;
-  let height = 0;
+  /** Absolute height. The ground is no longer a single plane at zero. */
+  let posY = terrainHeight(pos.x, pos.z);
+  let vy = 0;
+  let grounded = true;
+  /** True while Space is held in the air: falling slowly, cape spread. */
+  let gliding = false;
 
   const keys = new Set<string>();
   /** Where we are walking to. `id` is null when the destination is open ground. */
@@ -158,8 +308,10 @@ export function createEngine(
     if (!MOVE_KEYS.has(key)) return;
     // Arrows and space would otherwise scroll the page behind the canvas.
     e.preventDefault();
-    if (key === ' ' && airborne === 0) {
-      airborne = JUMP;
+    // Space jumps from the ground and opens the glide in the air.
+    if (key === ' ' && grounded) {
+      vy = JUMP;
+      grounded = false;
       callbacks.onFirstMove();
     }
     keys.add(key);
@@ -198,13 +350,12 @@ export function createEngine(
     dragDist += Math.abs(dx) + Math.abs(dy);
 
     yaw -= dx * 0.0042;
-    pitch = THREE.MathUtils.clamp(pitch - dy * 0.0032, -0.55, 0.42);
+    pitch = THREE.MathUtils.clamp(pitch - dy * 0.0032, -0.35, 0.9);
     if (dragDist > 12) autoTarget = null;
   };
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
-  const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const groundHit = new THREE.Vector3();
 
   const onPointerUp = (e: PointerEvent) => {
@@ -228,13 +379,30 @@ export function createEngine(
     // Nothing was hit — walk to the spot on the ground instead. Structures
     // have gaps you can see straight through (the arches especially), so a
     // click that misses must still do the obvious thing rather than nothing.
-    if (raycaster.ray.intersectPlane(groundPlane, groundHit)) {
-      const reach = Math.hypot(groundHit.x, groundHit.z);
-      if (reach < WORLD_RADIUS - 2) {
-        autoTarget = { id: null, x: groundHit.x, z: groundHit.z, reach: 0.8 };
-      }
+    //
+    // Marched against the height function rather than raycast against the
+    // terrain mesh: the mesh is a couple of hundred thousand triangles and
+    // three would test all of them. The flat plane is still the fallback for
+    // a ray that clears the ground entirely.
+    const hitGround = raycastTerrain(raycaster.ray.origin, raycaster.ray.direction, groundHit);
+
+    // Only walk to somewhere there is actually ground.
+    if (hitGround && onGround(groundHit.x, groundHit.z)) {
+      autoTarget = { id: null, x: groundHit.x, z: groundHit.z, reach: 0.8 };
     }
   };
+
+  /**
+   * A lost context is unrecoverable here and leaves a black canvas. Stop the
+   * loop; App listens for the same event and falls back to the readable page,
+   * so the visitor always has the content.
+   */
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
+    contextLost = true;
+    cancelAnimationFrame(raf);
+  };
+  canvas.addEventListener('webglcontextlost', onContextLost);
 
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
@@ -257,6 +425,7 @@ export function createEngine(
     pos.set(place.at[0] + Math.sin(angle) * stand, 0, place.at[1] + Math.cos(angle) * stand);
     vel.set(0, 0, 0);
     yaw = Math.atan2(place.at[0] - pos.x, place.at[1] - pos.z);
+    charYaw = yaw;
     autoTarget = null;
   }
 
@@ -272,12 +441,24 @@ export function createEngine(
         pos.z += dz * push;
       }
     }
-    const fromCentre = Math.hypot(pos.x, pos.z);
-    const limit = WORLD_RADIUS - 1.4;
-    if (fromCentre > limit) {
-      pos.x = (pos.x / fromCentre) * limit;
-      pos.z = (pos.z / fromCentre) * limit;
-    }
+  }
+
+  /**
+   * Put a fallen traveller back.
+   *
+   * Walking off an island is allowed and expected — it is how you leave one.
+   * Falling past everything is not a failure state worth punishing, so it
+   * simply returns you to the nearest island, above its surface.
+   */
+  function recover(): void {
+    const isl = nearestIsland(pos.x, pos.z);
+    pos.x = isl.x;
+    pos.z = isl.z;
+    posY = terrainHeight(isl.x, isl.z) + 1.2;
+    vel.set(0, 0, 0);
+    vy = 0;
+    gliding = false;
+    autoTarget = null;
   }
 
   function updateNear(): void {
@@ -305,14 +486,54 @@ export function createEngine(
     }
   }
 
+  // ── Autofocus ────────────────────────────────────────────────────────────
+  /**
+   * Depth of field follows whatever is straight ahead.
+   *
+   * Sampled every few frames rather than every frame — it raycasts the whole
+   * target set — and eased, so walking past a pillar does not snap the focus.
+   */
+  const CENTRE = new THREE.Vector2(0, 0);
+  const FOCUS_NEAR = 12;
+  const FOCUS_FAR = 40;
+  /** Where to focus when nothing is ahead — mid-world, not the far plane. */
+  const FOCUS_REST = 25;
+  let focus = 18;
+  let focusTarget = 18;
+  let focusTick = 0;
+
+  function updateFocus(dt: number): void {
+    focusTick += 1;
+    if (focusTick % 4 === 0) {
+      raycaster.setFromCamera(CENTRE, camera);
+      const hit = raycaster.intersectObjects(world.targets, false)[0];
+      // Missing means open ground or sky ahead. Resting at mid-world keeps the
+      // near field sharp; snapping to the far plane threw everything within
+      // ~17m out of focus, signs included.
+      focusTarget = hit
+        ? THREE.MathUtils.clamp(hit.distance, FOCUS_NEAR, FOCUS_FAR)
+        : FOCUS_REST;
+    }
+    // Reduced motion gets no focus pull at all — it is a slow easing camera
+    // move, which is exactly what that preference asks us not to do.
+    focus = reducedMotion ? focusTarget : focus + (focusTarget - focus) * Math.min(1, dt * 3.5);
+    post.setFocus(focus);
+  }
+
   // ── Frame loop ───────────────────────────────────────────────────────────
   const clock = new THREE.Clock();
+  const wantCam = new THREE.Vector3();
+  const camPos = new THREE.Vector3(0, 4, 24);
+  const lookAt = new THREE.Vector3();
+  /** Set when the GPU drops the context; the loop must not keep running. */
+  let contextLost = false;
   const forward = new THREE.Vector3();
   const right = new THREE.Vector3();
   const wish = new THREE.Vector3();
   let raf = 0;
 
   function frame(): void {
+    if (contextLost) return;
     raf = requestAnimationFrame(frame);
     const dt = Math.min(0.05, clock.getDelta());
 
@@ -320,14 +541,18 @@ export function createEngine(
     // two seconds, take some back. The clamp stops it oscillating.
     if (!paused) {
       if (dt > 0.033) { slowFrames += 1; fastFrames = 0; } else if (dt < 0.019) { fastFrames += 1; slowFrames = 0; }
-      if (slowFrames > 30 && renderScale > 0.55) {
-        renderScale = Math.max(0.55, renderScale - 0.15);
+      if (slowFrames > 90 && renderScale > 0.75) {
+        renderScale = Math.max(0.75, renderScale - 0.08);
         slowFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
-      } else if (fastFrames > 120 && renderScale < 1) {
-        renderScale = Math.min(1, renderScale + 0.15);
+        // The composer's targets are sized from the drawing buffer, so they
+        // have to be rebuilt or the effects resolve at the old resolution.
+        post.resize();
+      } else if (fastFrames > 400 && renderScale < 1) {
+        renderScale = Math.min(1, renderScale + 0.08);
         fastFrames = 0;
         renderer.setPixelRatio(maxDpr * renderScale);
+        post.resize();
       }
     }
 
@@ -366,7 +591,20 @@ export function createEngine(
       }
 
       if (wish.lengthSq() > 0) {
-        wish.normalize().multiplyScalar(keys.has('shift') ? SPEED * 1.75 : SPEED);
+        wish.normalize();
+        let want = keys.has('shift') ? SPEED * 1.75 : SPEED;
+        if (gliding) {
+          // A glide trades height for distance: you go faster than you can run.
+          want = GLIDE_SPEED;
+        } else if (grounded) {
+          // Hills cost you. Sample the ground a stride ahead and scale speed by
+          // the gradient, so climbing has weight and descending does not.
+          const PROBE = 0.9;
+          const ahead = terrainHeight(pos.x + wish.x * PROBE, pos.z + wish.z * PROBE);
+          const gradient = (ahead - terrainHeight(pos.x, pos.z)) / PROBE;
+          want *= THREE.MathUtils.clamp(1 - gradient * 1.1, 0.45, 1);
+        }
+        wish.multiplyScalar(want);
         if (!moved) {
           moved = true;
           callbacks.onFirstMove();
@@ -381,15 +619,41 @@ export function createEngine(
       collide();
       updateNear();
 
-      // Jumping. Purely for the fun of it — it changes nothing you can reach.
-      if (airborne !== 0 || height > 0) {
-        airborne -= GRAVITY * dt;
-        height += airborne * dt;
-        if (height <= 0) {
-          height = 0;
-          airborne = 0;
-        }
+      /**
+       * Vertical motion.
+       *
+       * The ground is no longer a plane at zero, so this is real: you fall off
+       * an island edge, and holding Space in the air opens a glide that turns
+       * the fall into a crossing. It is the only way between islands.
+       */
+      const ground = terrainHeight(pos.x, pos.z);
+      gliding = !grounded && keys.has(' ') && vy < 1.5;
+
+      if (grounded && posY > ground + 0.35) {
+        // The ground fell away underneath — you have walked off an edge.
+        grounded = false;
       }
+
+      if (!grounded) {
+        vy -= GRAVITY * dt;
+        if (gliding && vy < GLIDE_FALL) {
+          // Not a hard clamp: ease onto the glide so opening it does not
+          // read as hitting an invisible floor.
+          vy += (GLIDE_FALL - vy) * Math.min(1, dt * 7);
+        }
+        posY += vy * dt;
+
+        if (posY <= ground) {
+          posY = ground;
+          vy = 0;
+          grounded = true;
+          gliding = false;
+        }
+      } else {
+        posY = ground;
+      }
+
+      if (posY < FALL_LIMIT) recover();
     }
 
     // A little bob, so walking has weight. Never enough to hurt reading, and
@@ -397,15 +661,72 @@ export function createEngine(
     const bob = reducedMotion
       ? 0
       : Math.sin(clock.elapsedTime * 9) * Math.min(0.045, vel.length() * 0.006);
-    camera.position.set(pos.x, EYE + height + bob, pos.z);
-    sky.mesh.position.set(pos.x, 0, pos.z);
-    scenery.update(clock.elapsedTime);
-    camera.rotation.set(0, 0, 0, 'YXZ');
-    camera.rotateY(yaw + Math.PI);
-    camera.rotateX(pitch);
+    // ── The traveller ──────────────────────────────────────────────────────
+    const groundSpeed = Math.hypot(vel.x, vel.z);
 
-    callbacks.onPose(pos.x, pos.z, yaw);
-    renderer.render(scene, camera);
+    // Turn toward travel, by the shortest way round.
+    if (groundSpeed > 0.4) {
+      const want = Math.atan2(vel.x, vel.z);
+      let delta = want - charYaw;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      charYaw += THREE.MathUtils.clamp(delta, -8 * dt, 8 * dt);
+    }
+
+    character.group.position.set(pos.x, posY, pos.z);
+    character.group.rotation.y = charYaw;
+    character.update(dt, groundSpeed, !grounded, clock.elapsedTime);
+    cape.update(dt, character.shoulders, vel, clock.elapsedTime);
+
+    // ── Camera ─────────────────────────────────────────────────────────────
+    const focusY = posY + LOOK_UP;
+    const cosPitch = Math.cos(pitch);
+    wantCam.set(
+      pos.x - Math.sin(yaw) * CAM_BACK * cosPitch,
+      focusY + CAM_UP * 0.5 + Math.sin(pitch) * CAM_BACK,
+      pos.z - Math.cos(yaw) * CAM_BACK * cosPitch,
+    );
+    // Never let the camera sink into a hillside — but only where there is one
+    // to sink into, or it would be shoved to the void floor over open air.
+    if (onGround(wantCam.x, wantCam.z)) {
+      wantCam.y = Math.max(wantCam.y, terrainHeight(wantCam.x, wantCam.z) + 0.45);
+    }
+
+    // Critically damped: it must catch up without ever overshooting, or the
+    // whole world appears to wobble every time you stop.
+    const follow = reducedMotion ? 1 : 1 - Math.exp(-11 * dt);
+    camPos.lerp(wantCam, follow);
+    camera.position.copy(camPos);
+    lookAt.set(pos.x, focusY + bob, pos.z);
+    camera.lookAt(lookAt);
+
+    // Fade the traveller out rather than clipping through them up close.
+    const near = camera.position.distanceTo(lookAt);
+    character.setOpacity(THREE.MathUtils.clamp((near - 1.0) / 0.8, 0.25, 1));
+
+    sky.update(pos.x, pos.z);
+    aimSun(pos.x, pos.z);
+    scenery.update(clock.elapsedTime);
+
+    // One write per frame reaches the sky dome and every patched material.
+    skyUniforms.uTime.value = clock.elapsedTime;
+    // And one more reaches the grass, the flowers and the bunting together, so
+    // a gust crosses all three at once.
+    windUniforms.uWindTime.value = reducedMotion ? 0 : clock.elapsedTime;
+    windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
+    water.update(reducedMotion ? 0 : clock.elapsedTime);
+    beacons.update(reducedMotion ? 0 : clock.elapsedTime);
+    cloudSea.update(reducedMotion ? 0 : clock.elapsedTime);
+    camera.updateMatrixWorld();
+    skyUniforms.uSunDirView.value
+      .copy(skyUniforms.uSunDir.value)
+      .transformDirection(camera.matrixWorldInverse);
+
+    updateFocus(dt);
+
+    // The traveller's facing, not the camera's — the minimap tracks them.
+    callbacks.onPose(pos.x, pos.z, charYaw);
+    post.render(dt);
   }
 
   frame();
@@ -414,6 +735,7 @@ export function createEngine(
     resize() {
       frameForAspect();
       renderer.setSize(window.innerWidth, window.innerHeight, false);
+      post.resize();
     },
     goTo,
     teleport,
@@ -431,10 +753,21 @@ export function createEngine(
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clearKeys);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
+      post.dispose();
+      water.dispose();
+      cape.dispose();
+      character.dispose();
+      beacons.dispose();
+      cloudSea.dispose();
+      motes.dispose();
+      bunting.dispose();
+      grass.dispose();
+      terrain.dispose();
       world.dispose();
       scenery.dispose();
       materials.dispose();

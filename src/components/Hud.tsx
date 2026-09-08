@@ -76,7 +76,8 @@ export default function Hud({
             <span className="kbd">D</span> to walk
           </span>
           <span className="hint-key-only">
-            <span className="kbd">Shift</span> run · <span className="kbd">Space</span> jump
+            <span className="kbd">Shift</span> run · <span className="kbd">Space</span> jump,
+            hold to glide
           </span>
           <span>Drag to look</span>
           <span>
