@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { places, WORLD_RADIUS } from '../data/world';
 import { buildWorld, PLAZA_RADIUS, type BuiltWorld } from './build';
+import { buildBeacons, type Beacons } from './beacons';
 import { buildBunting, type Bunting } from './bunting';
 import { buildGrass, type Grass } from './grass';
 import { buildMotes, type Motes } from './motes';
@@ -213,11 +214,14 @@ export function createEngine(
    * comfortably; what it cannot carry is the HDR chain, and those are separate
    * questions.
    */
-  const grass: Grass = buildGrass(quality, grassDensity);
+  const grass: Grass = buildGrass(grassDensity);
   scene.add(grass.group);
 
   const bunting: Bunting = buildBunting();
   scene.add(bunting.group);
+
+  const beacons: Beacons = buildBeacons();
+  scene.add(beacons.group);
 
   const motes: Motes = buildMotes(quality);
   scene.add(motes.points);
@@ -584,6 +588,7 @@ export function createEngine(
     windUniforms.uWindTime.value = reducedMotion ? 0 : clock.elapsedTime;
     windUniforms.uPlayer.value.set(pos.x, terrainHeight(pos.x, pos.z), pos.z);
     water.update(reducedMotion ? 0 : clock.elapsedTime);
+    beacons.update(reducedMotion ? 0 : clock.elapsedTime);
     camera.updateMatrixWorld();
     skyUniforms.uSunDirView.value
       .copy(skyUniforms.uSunDir.value)
@@ -626,6 +631,7 @@ export function createEngine(
       canvas.removeEventListener('pointercancel', onPointerUp);
       post.dispose();
       water.dispose();
+      beacons.dispose();
       motes.dispose();
       bunting.dispose();
       grass.dispose();

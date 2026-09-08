@@ -16,8 +16,10 @@ import { applySkyShading } from './shaders/skyMaterial';
  */
 
 /** Rolling amplitude in metres, before the flatten masks. */
-const AMPLITUDE = 3.2;
-const BASE_FREQUENCY = 1 / 38;
+const AMPLITUDE = 4.6;
+const BASE_FREQUENCY = 1 / 44;
+/** How hard the land is pushed into flat tops and steep sides. */
+const TERRACE_LEVELS = 2.4;
 
 /** How far past the boundary the land takes to fall away. */
 const CLIFF_RUN = 25;
@@ -38,8 +40,8 @@ const PLAZA_FALLOFF = 20;
  * the plaza, in the widest gap between two paths: a ring of water around the
  * arrival monument would look better and make you wade to reach it.
  */
-export const POOL_CENTRE: [number, number] = [-7.5, -0.8];
-export const POOL_RADIUS = 3.3;
+export const POOL_CENTRE: [number, number] = [-9.2, -1.0];
+export const POOL_RADIUS = 2.9;
 const POOL_DEPTH = 0.75;
 /** The waterline: below the rim, above the floor of the basin. */
 export const POOL_SURFACE = -0.28;
@@ -96,12 +98,33 @@ function flattenAmount(x: number, z: number): number {
   return level;
 }
 
-/** Three octaves of simplex, the rolling shape of the land. */
+/**
+ * Push a height toward flat tops with steep sides between them.
+ *
+ * Plain fbm gives soft rolling dunes. The land being matched is not dunes — it
+ * is plateaus and headlands: broad level tops, then a short steep fall to the
+ * next level. Quantising the height into bands and easing sharply across each
+ * band boundary produces exactly that, and because it is a pure function of
+ * the input it stays compatible with everything that samples the terrain.
+ */
+function terrace(h: number): number {
+  const scaled = (h / AMPLITUDE) * TERRACE_LEVELS;
+  const band = Math.floor(scaled);
+  const across = scaled - band;
+  // Flat for most of the band, then a fast riser through the middle.
+  const eased = smoothstep(0.22, 0.78, across);
+  return ((band + eased) / TERRACE_LEVELS) * AMPLITUDE;
+}
+
+/** Three octaves of simplex, terraced into plateaus. */
 function rolling(x: number, z: number): number {
-  let h = noise2D(x * BASE_FREQUENCY, z * BASE_FREQUENCY) * AMPLITUDE;
-  h += noise2D(x * BASE_FREQUENCY * 2.1, z * BASE_FREQUENCY * 2.1) * AMPLITUDE * 0.45;
-  h += noise2D(x * BASE_FREQUENCY * 4.3, z * BASE_FREQUENCY * 4.3) * AMPLITUDE * 0.2;
-  return h;
+  let h = noise2D(x * BASE_FREQUENCY, z * BASE_FREQUENCY);
+  h += noise2D(x * BASE_FREQUENCY * 2.1, z * BASE_FREQUENCY * 2.1) * 0.45;
+  h += noise2D(x * BASE_FREQUENCY * 4.3, z * BASE_FREQUENCY * 4.3) * 0.2;
+  // Terrace the broad shape, then lay the fine octave back on top so the tops
+  // are level but not glassy.
+  const shaped = terrace((h / 1.65) * AMPLITUDE);
+  return shaped + noise2D(x * BASE_FREQUENCY * 6.1, z * BASE_FREQUENCY * 6.1) * 0.35;
 }
 
 /**

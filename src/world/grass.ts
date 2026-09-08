@@ -122,8 +122,11 @@ function rejects(x: number, z: number, normalScratch: THREE.Vector3): boolean {
   // Nothing grows in the pool.
   if (Math.hypot(x - POOL_CENTRE[0], z - POOL_CENTRE[1]) < POOL_RADIUS + 1.2) return true;
 
+  // Generous, because the terracing made the plateau sides genuinely steep:
+  // at 0.45 the grass stopped at every riser and the land went bald exactly
+  // where the reference is greenest.
   const slope = 1 - terrainNormal(x, z, normalScratch).y;
-  if (slope > 0.45) return true;
+  if (slope > 0.62) return true;
 
   for (const place of places) {
     const dx = x - place.at[0];
@@ -246,7 +249,7 @@ varying float vTint;`,
     );
 }
 
-export function buildGrass(quality: 'high' | 'low', density = 140000): Grass {
+export function buildGrass(density = 140000): Grass {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
 
@@ -357,7 +360,10 @@ export function buildGrass(quality: 'high' | 'low', density = 140000): Grass {
   }
 
   // ── Flowers ────────────────────────────────────────────────────────────────
-  const flowerCount = quality === 'high' ? 6000 : 700;
+  // The reference meadows are carpeted, not sprinkled — small white blooms
+  // everywhere with colour as the accent. Scaled off the same budget as the
+  // grass, so it stays dense wherever the grass is.
+  const flowerCount = Math.round(target / 5);
   const petalTexture = flowerTexture();
   disposables.push(petalTexture);
 
@@ -412,7 +418,11 @@ varying float vTint;`,
   }
   disposables.push(cross);
 
-  const PALETTE = [0xf58bc0, 0xf2a8d4, 0xffffff, 0xffd86e].map((hex) => new THREE.Color(hex));
+  // Weighted white: the drifts of colour read as accents against it.
+  const PALETTE = [
+    0xffffff, 0xffffff, 0xfdfbf4, 0xffffff,
+    0xf58bc0, 0xf2a8d4, 0xffd86e,
+  ].map((hex) => new THREE.Color(hex));
   const flowers = new THREE.InstancedMesh(cross, flowerMaterial, flowerCount);
   const colors = new Float32Array(flowerCount * 3);
   const fTints = new Float32Array(flowerCount);
@@ -426,12 +436,16 @@ varying float vTint;`,
     const z = Math.sin(a) * r;
     if (rejects(x, z, normalScratch)) continue;
     // Meadows are patchy, not uniform: a low-frequency mask makes drifts.
+    // Patchy, but only just: a hard mask leaves bare ground where the
+    // reference has an unbroken carpet.
     const clump = rnd(Math.floor(x * 0.12) * 31.7 + Math.floor(z * 0.12) * 71.3);
-    if (clump < 0.45) continue;
+    if (clump < 0.16) continue;
 
     dummy.position.set(x, terrainHeight(x, z), z);
     dummy.rotation.set(0, rnd(i * 2.2) * Math.PI, 0);
-    dummy.scale.setScalar(0.8 + rnd(i * 8.8) * 0.5);
+    // Small. At any larger size these read as daisies the size of a head
+    // rather than as the fine bloom that carpets the reference meadows.
+    dummy.scale.setScalar(0.13 + rnd(i * 8.8) * 0.13);
     dummy.updateMatrix();
     flowers.setMatrixAt(placed, dummy.matrix);
 
