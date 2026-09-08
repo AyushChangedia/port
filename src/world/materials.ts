@@ -18,28 +18,38 @@ export interface Materials {
   metal: THREE.MeshStandardMaterial;
   /** Reflective glazing. Real clearcoat on capable devices. */
   glass: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial;
-  /** Cheaper glass for the hundreds of distant towers. */
-  glassFar: THREE.MeshStandardMaterial;
+  /** The land on the horizon, beyond the drop. */
+  distant: THREE.MeshStandardMaterial;
   foliage: THREE.MeshStandardMaterial;
   dispose(): void;
 }
 
 export function createMaterials(quality: 'high' | 'low'): Materials {
+  /**
+   * Stone.
+   *
+   * Cool and dark rather than the warm sandstone this started as. Against a
+   * green meadow, pale warm stone has almost no separation — every structure
+   * sat at the same value as the ground behind it and the whole scene read
+   * flat. The reference gets its punch from dark stone against bright grass.
+   */
   const stone = applySkyShading(
     new THREE.MeshStandardMaterial({
-      color: 0xc9b79a,
-      roughness: 0.85,
+      color: 0x6c7168,
+      roughness: 0.88,
       metalness: 0,
-      envMapIntensity: 0.7,
+      envMapIntensity: 0.5,
     }),
   );
 
+  // The pale counterpart: pillars, caps, plinths. Cool, so it reads as stone
+  // beside the dark rather than as a different material entirely.
   const stoneLight = applySkyShading(
     new THREE.MeshStandardMaterial({
-      color: 0xe4d6bc,
-      roughness: 0.8,
+      color: 0xc6c8bd,
+      roughness: 0.82,
       metalness: 0,
-      envMapIntensity: 0.8,
+      envMapIntensity: 0.7,
     }),
   );
 
@@ -100,16 +110,21 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     { rimColor: 0xdcf2ff, rimStrength: 1.8, rimPower: 2.2 },
   );
 
-  // The skyline is opaque on purpose: a few hundred transparent boxes cost
-  // depth sorting every frame and buy nothing at that distance.
-  const glassFar = applySkyShading(
+  /**
+   * Distant land.
+   *
+   * Deliberately desaturated and slightly cool: it sits behind most of the
+   * aerial perspective, so anything vivid here fights the foreground instead
+   * of receding behind it.
+   */
+  const distant = applySkyShading(
     new THREE.MeshStandardMaterial({
-      color: 0xb4d2e8,
-      roughness: 0.14,
-      metalness: 0.7,
-      envMapIntensity: 1.6,
+      color: 0x6f8a66,
+      roughness: 1,
+      metalness: 0,
+      envMapIntensity: 0.3,
     }),
-    { rimColor: 0xdcf2ff, rimStrength: 1.4 },
+    { rimColor: 0xcfe6f5, rimStrength: 0.7 },
   );
 
   const foliage = applySkyShading(
@@ -122,7 +137,7 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     { rimColor: 0xd8f0a8, rimStrength: 1.2 },
   );
 
-  const all = [stone, stoneLight, accent, metal, glass, glassFar, foliage];
+  const all = [stone, stoneLight, accent, metal, glass, distant, foliage];
 
   return {
     stone,
@@ -130,7 +145,7 @@ export function createMaterials(quality: 'high' | 'low'): Materials {
     accent,
     metal,
     glass,
-    glassFar,
+    distant,
     foliage,
     dispose() {
       for (const m of all) m.dispose();

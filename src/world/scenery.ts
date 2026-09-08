@@ -95,38 +95,47 @@ export function buildScenery(materials: Materials, quality: 'high' | 'low'): Sce
     return false;
   };
 
-  // ── The skyline ──────────────────────────────────────────────────────────
-  // A ring of glass towers just beyond the boundary. It is the single biggest
-  // reason the world stops feeling like an empty plane.
-  const towerCount = quality === 'high' ? 190 : 90;
-  instance(box, materials.glassFar, towerCount, (i, o) => {
-    const ring = i / towerCount;
-    const angle = ring * Math.PI * 2 + rnd(i) * 0.05;
+  // ── The horizon ──────────────────────────────────────────────────────────
+  /**
+   * Distant land, not a city.
+   *
+   * This was a ring of two hundred glass towers, and it was the single reason
+   * the world read as architectural visualisation rather than the reference:
+   * there is no city anywhere in the art direction being matched. What belongs
+   * on that horizon is more land — headlands and plateaus rising out of the
+   * cloud sea, far enough away that the aerial perspective does most of the
+   * work.
+   */
+  const hillCount = quality === 'high' ? 90 : 46;
+  instance(ico, materials.distant, hillCount, (i, o) => {
+    const angle = (i / hillCount) * Math.PI * 2 + rnd(i) * 0.06;
     const depth = rnd(i * 3.1);
-    const radius = WORLD_RADIUS + 8 + depth * 62;
-    const h = 8 + rnd(i * 7.7) * 46 * (0.45 + depth);
-    const w = 3.5 + rnd(i * 5.3) * 5;
-    const tx = Math.cos(angle) * radius;
-    const tz = Math.sin(angle) * radius;
-    // The skyline is out past the drop, so it stands on the low plain and the
-    // cloud sea takes its feet.
-    o.position.set(tx, terrainHeight(tx, tz) + h / 2, tz);
-    o.scale.set(w, h, w * (0.7 + rnd(i * 2.2) * 0.6));
-    o.rotation.y = rnd(i * 9.4) * Math.PI;
+    const radius = WORLD_RADIUS + 55 + depth * 210;
+    // Wide and low. Tall and narrow reads as towers again.
+    const width = 34 + rnd(i * 5.3) * 62;
+    const height = 13 + rnd(i * 7.7) * 30 * (0.5 + depth);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    // Sunk into the plain so the cloud sea takes their feet and only the
+    // headland shows, the way an island does across water.
+    o.position.set(x, terrainHeight(x, z) + height * 0.16, z);
+    o.scale.set(width, height, width * (0.7 + rnd(i * 2.2) * 0.7));
+    o.rotation.set(rnd(i * 1.7) * 0.2, rnd(i * 9.4) * Math.PI, rnd(i * 4.4) * 0.2);
   });
 
-  // Darker cores behind the glass, so the towers read as buildings rather
-  // than as floating panes.
-  instance(box, materials.stone, Math.floor(towerCount * 0.55), (i, o) => {
-    const ring = (i * 1.81) / towerCount;
-    const angle = ring * Math.PI * 2;
+  // A few flat-topped plateaus among them, for silhouettes that are not all
+  // the same rounded shape.
+  const mesaCount = quality === 'high' ? 26 : 12;
+  instance(box, materials.distant, mesaCount, (i, o) => {
+    const angle = rnd(i * 2.6) * Math.PI * 2;
     const depth = rnd(i * 4.4);
-    const radius = WORLD_RADIUS + 14 + depth * 58;
-    const h = 6 + rnd(i * 8.1) * 34 * (0.4 + depth);
-    const cx = Math.cos(angle) * radius;
-    const cz = Math.sin(angle) * radius;
-    o.position.set(cx, terrainHeight(cx, cz) + h / 2, cz);
-    o.scale.set(3 + rnd(i) * 4, h, 3 + rnd(i * 1.3) * 4);
+    const radius = WORLD_RADIUS + 80 + depth * 190;
+    const height = 16 + rnd(i * 8.1) * 26;
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    o.position.set(x, terrainHeight(x, z) + height * 0.34, z);
+    o.scale.set(26 + rnd(i) * 46, height, 22 + rnd(i * 1.3) * 40);
+    o.rotation.y = rnd(i * 3.3) * Math.PI;
   });
 
   // ── Lamps along the paths ────────────────────────────────────────────────
