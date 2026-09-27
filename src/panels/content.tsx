@@ -3,8 +3,10 @@ import { profile } from '../data/profile';
 import { experience, leadership } from '../data/experience';
 import { projects } from '../data/projects';
 import { skills, groupLabels, type SkillGroup } from '../data/skills';
-import { socials, resume, email } from '../data/socials';
+import { socials, resume } from '../data/socials';
 import { placeById } from '../data/world';
+
+const linkedin = socials.find((s) => s.id === 'linkedin')!;
 
 /**
  * What you read when you open a structure.
@@ -93,9 +95,8 @@ export function panelContent(placeId: string): { title: string; eyebrow: string;
             </dl>
 
             <p className="actions">
-              <a className="btn btn--accent" href={`mailto:${email}`}>Email him</a>
-              <a className="btn" href={resume.href} target="_blank" rel="noreferrer noopener">
-                Résumé (PDF) ↗
+              <a className="btn btn--accent" href={linkedin.href} target="_blank" rel="noreferrer noopener">
+                LinkedIn ↗
               </a>
             </p>
           </>
