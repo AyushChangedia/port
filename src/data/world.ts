@@ -21,7 +21,13 @@ export interface Place {
   name: string;
   /** Small line under the sign. */
   sub: string;
-  /** Ground position: [x, z]. */
+  /**
+   * Ground position: [x, z].
+   *
+   * Scaled out from the original layout so the islands built under these have
+   * real air between them. The relative arrangement is unchanged, so the map
+   * and the directory read exactly as before.
+   */
   at: [number, number];
   /** How close you must be for the structure to open. */
   reach: number;
@@ -31,7 +37,13 @@ export interface Place {
   projectId?: string;
 }
 
-export const WORLD_RADIUS = 46;
+/**
+ * The extent the minimap normalises against.
+ *
+ * Grown with the layout: the islands sit further apart than they did, and the
+ * map has to keep the outermost one inside its circle.
+ */
+export const WORLD_RADIUS = 88;
 
 export const places: Place[] = [
   {
@@ -39,7 +51,7 @@ export const places: Place[] = [
     kind: 'origin',
     name: 'Ayush Changedia',
     sub: 'Start here',
-    at: [0, 0],
+    at: [0.0, 0.0],
     reach: 5,
     solid: 2.2,
   },
@@ -48,7 +60,7 @@ export const places: Place[] = [
     kind: 'about',
     name: 'About',
     sub: 'Who he is',
-    at: [-15, -11],
+    at: [-27.8, -20.4],
     reach: 5.5,
     solid: 3,
   },
@@ -57,7 +69,7 @@ export const places: Place[] = [
     kind: 'record',
     name: 'Experience',
     sub: 'Internships & leadership',
-    at: [-18, 8],
+    at: [-33.3, 14.8],
     reach: 5.5,
     solid: 3.2,
   },
@@ -67,7 +79,7 @@ export const places: Place[] = [
     projectId: 'orb',
     name: 'ORB Backtester',
     sub: 'Project 01',
-    at: [14, -13],
+    at: [25.9, -24.1],
     reach: 5.5,
     solid: 3.4,
   },
@@ -77,7 +89,7 @@ export const places: Place[] = [
     projectId: 'git-city',
     name: 'Git City',
     sub: 'Project 02',
-    at: [22, 3],
+    at: [40.7, 5.6],
     reach: 6,
     solid: 3.8,
   },
@@ -87,7 +99,7 @@ export const places: Place[] = [
     projectId: 'resume-roaster',
     name: 'Résumé Roaster',
     sub: 'Project 03',
-    at: [11, 16],
+    at: [20.4, 29.6],
     reach: 5.5,
     solid: 3,
   },
@@ -97,7 +109,7 @@ export const places: Place[] = [
     projectId: 'commerce-api',
     name: 'Commerce API',
     sub: 'Project 04',
-    at: [-5, 22],
+    at: [-9.2, 40.7],
     reach: 5.5,
     solid: 3.4,
   },
@@ -106,7 +118,7 @@ export const places: Place[] = [
     kind: 'skills',
     name: 'Toolkit',
     sub: 'What he builds with',
-    at: [2, -24],
+    at: [3.7, -44.4],
     reach: 6,
     solid: 3.6,
   },
@@ -115,7 +127,7 @@ export const places: Place[] = [
     kind: 'contact',
     name: 'Contact',
     sub: 'Ways to reach him',
-    at: [-24, 21],
+    at: [-44.4, 38.9],
     reach: 5.5,
     solid: 3,
   },

@@ -13,9 +13,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          // three is the heaviest dependency and is only needed once the
-          // WebGL layer boots — keep it out of the critical entry chunk.
-          three: ['three'],
+          // three and the post-processing chain are the heaviest dependencies
+          // and are only needed once the WebGL layer boots — keep them out of
+          // the critical entry chunk so the readable fallback stays cheap.
+          three: ['three', 'postprocessing'],
         },
       },
     },

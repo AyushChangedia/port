@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/examples/jsm/objects/Reflector.js';
-import { places, WORLD_RADIUS, type Place } from '../data/world';
+import { places, type Place } from '../data/world';
 import { makeSign } from './labels';
 import type { Materials } from './materials';
+import { POOL_CENTRE, POOL_RADIUS, POOL_SURFACE, terrainHeight } from './terrain';
+import { disposeStonework, glyphTexture, roundedBox } from './stonework';
 
 /**
  * Builds the world.
@@ -24,6 +26,9 @@ export interface BuiltWorld {
 
 const ACCENT = 0xb8391a;
 
+/** The pool at the centre of the plaza. water.ts surfaces it. */
+export const PLAZA_RADIUS = POOL_RADIUS;
+
 export function buildWorld(quality: 'high' | 'low', materials: Materials): BuiltWorld {
   const root = new THREE.Group();
   const targets: THREE.Object3D[] = [];
@@ -37,10 +42,17 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
 
   // Materials are shared with the scenery layer and disposed by their owner.
   const { stone, stoneLight, accent, glass, metal } = materials;
-  const box = track(new THREE.BoxGeometry(1, 1, 1));
   const cylinder = track(new THREE.CylinderGeometry(0.5, 0.5, 1, quality === 'high' ? 20 : 10));
+  disposables.push({ dispose: disposeStonework });
 
-  /** A box placed by its footprint centre, sitting on the ground. */
+  /**
+   * A block placed by its footprint centre, sitting on the ground.
+   *
+   * Chamfered rather than a scaled unit cube: a hard 90-degree corner is the
+   * most obviously computer-generated thing in a scene made of boxes, and one
+   * caught highlight along an edge does more for the stone than any amount of
+   * shading.
+   */
   const slab = (
     parent: THREE.Object3D,
     w: number,
@@ -51,8 +63,7 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
     z: number,
     material: THREE.Material = stone,
   ) => {
-    const mesh = new THREE.Mesh(box, material);
-    mesh.scale.set(w, h, d);
+    const mesh = new THREE.Mesh(roundedBox(w, h, d), material);
     mesh.position.set(x, y + h / 2, z);
     mesh.castShadow = quality === 'high';
     mesh.receiveShadow = true;
@@ -78,26 +89,25 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
   };
 
   // ── Ground ───────────────────────────────────────────────────────────────
-  const groundGeo = track(new THREE.CircleGeometry(WORLD_RADIUS, 64));
-  const ground = new THREE.Mesh(groundGeo, materials.ground);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  root.add(ground);
+  // The ground itself is terrain.ts now. What is left here is what sits on it.
 
   // The plaza is polished: a real mirror where the device can afford one, and
   // a glossy floor where it cannot. It is what makes the monument feel like it
-  // is standing on something.
-  const plazaGeo = track(new THREE.CircleGeometry(11.5, 64));
+  // is standing on something. The plaza is flattened to y=0 by the terrain's
+  // mask, so a flat disc is still correct here.
+  // The reflector is the pool's floor, so it sits in the basin rather than
+  // covering the whole plaza.
+  const plazaGeo = track(new THREE.CircleGeometry(PLAZA_RADIUS, 64));
   if (quality === 'high') {
     const mirror = new Reflector(plazaGeo, {
-      // A plaza reflection reads fine at this size and costs a quarter of
-      // what a 512 map does.
-      textureWidth: 256,
-      textureHeight: 256,
-      color: 0xb9b4a8,
+      // Now that a water surface sits on top of it, the reflection is read
+      // through ripples and at grazing angles, so it earns the larger map.
+      textureWidth: 512,
+      textureHeight: 512,
+      color: 0x9fb8c4,
     });
     mirror.rotation.x = -Math.PI / 2;
-    mirror.position.y = 0.012;
+    mirror.position.set(POOL_CENTRE[0], POOL_SURFACE - 0.02, POOL_CENTRE[1]);
     root.add(mirror);
     disposables.push({ dispose: () => mirror.dispose() });
   } else {
@@ -106,38 +116,45 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
     }));
     const plaza = new THREE.Mesh(plazaGeo, plazaMat);
     plaza.rotation.x = -Math.PI / 2;
-    plaza.position.y = 0.012;
+    plaza.position.set(POOL_CENTRE[0], POOL_SURFACE - 0.02, POOL_CENTRE[1]);
     root.add(plaza);
   }
 
 
-  // A low wall so the edge of the world reads as deliberate.
-  const rimGeo = track(new THREE.TorusGeometry(WORLD_RADIUS, 0.22, 6, quality === 'high' ? 96 : 48));
-  const rim = new THREE.Mesh(rimGeo, metal);
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.22;
-  root.add(rim);
-
-  // Paths from the plaza to each structure. Wayfinding first — an empty
-  // ground plane gives you no reason to pick one direction over another.
-  const pathMat = track(new THREE.MeshBasicMaterial({ color: 0xc9c3b5, transparent: true, opacity: 0.85 }));
-  const pathGeo = track(new THREE.PlaneGeometry(1, 1));
-  for (const place of places) {
-    if (place.id === 'origin') continue;
-    const len = Math.hypot(place.at[0], place.at[1]);
-    const path = new THREE.Mesh(pathGeo, pathMat);
-    path.rotation.x = -Math.PI / 2;
-    path.rotation.z = -Math.atan2(place.at[0], place.at[1]);
-    path.scale.set(1.5, len, 1);
-    path.position.set(place.at[0] / 2, 0.015, place.at[1] / 2);
-    root.add(path);
-  }
+  /**
+   * No boundary rim, and no radial paths.
+   *
+   * Both assumed one continuous disc. There is no single edge to trim now, and
+   * a path from the plaza to a place would run out over open air — the way
+   * between islands is the glide, and the beacons carry the wayfinding.
+   */
 
   // ── Structures ───────────────────────────────────────────────────────────
-  const ringGeo = track(new THREE.RingGeometry(0.92, 1, 48));
+  /**
+   * Approach rings, built per place so each can be dropped onto the ground.
+   *
+   * The pads are level out to `solid + 2.5`m and every reach sits within that,
+   * so in practice these are flat today — but they are displaced anyway, so
+   * tuning a reach later cannot quietly bury one in a hillside.
+   */
+  const makeRing = (place: Place): THREE.BufferGeometry => {
+    const geo = new THREE.RingGeometry(place.reach * 0.92, place.reach, 64);
+    geo.rotateX(-Math.PI / 2);
+    const position = geo.attributes.position;
+    for (let i = 0; i < position.count; i += 1) {
+      const x = place.at[0] + position.getX(i);
+      const z = place.at[1] + position.getZ(i);
+      position.setY(i, terrainHeight(x, z) + 0.02);
+    }
+    position.needsUpdate = true;
+    geo.computeVertexNormals();
+    return track(geo);
+  };
+
   const markerMat = () =>
     track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
 
+  let glyphIndex = 0;
   for (const place of places) {
     const group = new THREE.Group();
     group.position.set(place.at[0], 0, place.at[1]);
@@ -145,11 +162,59 @@ export function buildWorld(quality: 'high' | 'low', materials: Materials): Built
 
     const height = buildStructure(place, group, { slab, post, stone, stoneLight, accent, glass, metal });
 
+    /**
+     * A carved glyph on the face that greets you.
+     *
+     * Emissive and unlit, so it holds its colour in shadow and reads as
+     * something cut into the stone and lit from within rather than painted on.
+     * One motif per place: somewhere becomes identifiable by its symbol as
+     * well as by its sign.
+     */
+    const glyphMap = glyphTexture(glyphIndex);
+    const glyphMat = track(new THREE.MeshBasicMaterial({
+      map: glyphMap,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      toneMapped: false,
+      color: 0x6fc4e8,
+    }));
+    disposables.push({ dispose: () => glyphMap.dispose() });
+    const glyphSize = Math.min(2.1, place.solid * 0.72);
+    const glyph = new THREE.Mesh(track(new THREE.PlaneGeometry(glyphSize, glyphSize)), glyphMat);
+    // Face the plaza, standing just clear of the structure's own surface.
+    const facing = Math.atan2(-place.at[0], -place.at[1]);
+    glyph.position.set(
+      Math.sin(facing) * (place.solid + 0.06),
+      Math.min(2.6, height * 0.55),
+      Math.cos(facing) * (place.solid + 0.06),
+    );
+    glyph.rotation.y = facing;
+    glyph.renderOrder = 4;
+    group.add(glyph);
+    glyphIndex += 1;
+
+    /**
+     * Erosion at the footing.
+     *
+     * Nothing in the references meets the ground along a ruled line. A few
+     * small tumbled blocks around each base break that line, and they are the
+     * cheapest possible way to do it.
+     */
+    for (let e = 0; e < 5; e += 1) {
+      const a = (e / 5) * Math.PI * 2 + place.solid;
+      const spread = place.solid * (0.85 + ((e * 37) % 11) / 40);
+      const size = 0.26 + ((e * 53) % 13) / 42;
+      const rubble = new THREE.Mesh(roundedBox(size, size * 0.62, size * 0.86, 0.05), stoneLight);
+      rubble.position.set(Math.sin(a) * spread, size * 0.28, Math.cos(a) * spread);
+      rubble.rotation.set(((e * 17) % 7) / 12, a * 1.7, ((e * 29) % 5) / 14);
+      rubble.castShadow = quality === 'high';
+      rubble.receiveShadow = true;
+      group.add(rubble);
+    }
+
     // Ground ring marking where the structure opens.
-    const ring = new THREE.Mesh(ringGeo, markerMat());
-    ring.scale.setScalar(place.reach);
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.02;
+    const ring = new THREE.Mesh(makeRing(place), markerMat());
     group.add(ring);
     markers.set(place.id, ring);
 
